@@ -1,0 +1,2 @@
+"""TraFriend application use cases."""
+

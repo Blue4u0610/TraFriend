@@ -1,0 +1,2 @@
+"""Transport and presentation adapters."""
+
