@@ -7,7 +7,7 @@
 - Scope: U.S.-listed stocks and ETFs, including leveraged ETFs
 - Phase decision: implement Alpaca as the first real **manual-validation** adapter; retain Mock as the default
 - Production decision: blocked on live-symbol validation and written public-display/redistribution permission
-- Validation status on 2026-09-05: Mock and mocked Alpaca HTTP payloads verified; no Alpaca credentials were present, so historical real data and live real data remain unverified
+- Validation status on 2026-09-05: Mock and mocked Alpaca HTTP payloads verified. Credentialed historical `boats` results demonstrate real overnight bars for SNDK, QQQ, and TQQQ; SNXX returned no bar in the configured 20:00-20:15 ET opening window. Full-session SNXX liquidity and live snapshot behavior remain unverified.
 
 “Extended hours” is not treated as proof of overnight coverage. A provider qualifies only when its current official documentation explicitly covers the 20:00-04:00 ET session or identifies a venue/feed that does.
 
@@ -182,6 +182,21 @@ No unofficial endpoint is selected. Broker web/mobile endpoints may display over
 Web scraping or private endpoints require explicit product, legal, and security approval and are not a fallback in this architecture.
 
 ## 7. Manual validation gates before scheduling
+
+### 7.1 Credentialed historical evidence
+
+Credentialed Alpaca `boats` checks for trading date 2026-09-04 produced the following real historical results:
+
+- SNDK was available at 20:00 ET with an opening price of `1551`; SNXX returned no valid one-minute bar during the configured 20:00-20:15 ET `OVERNIGHT_OPEN` search window, so the pair was `PARTIAL`.
+- QQQ's first valid bar was at 20:02 ET with an opening price of `717.41`; TQQQ's first valid bar was at 20:00 ET with an opening price of `71.88`. Both were available, so the capture was `VALID`, but their first-trade timestamps differed by 120 seconds.
+
+These results demonstrate that the historical Alpaca BOATS path works and that leveraged ETFs are not systematically absent from the feed. They do not yet establish whether SNXX had no BOATS data during the entire session or merely had no trade in the first 15 minutes.
+
+The QQQ/TQQQ result also shows that independently selected first-trade opens are not inherently synchronized: a complete pair can represent market events two minutes apart. That timing mismatch can distort a leveraged relationship calculation during a moving market. It is evidence for evaluating a synchronized `OVERNIGHT_SNAPSHOT` as the eventual calculator default; it does not change the current `OVERNIGHT_OPEN` policy.
+
+Alpaca's documented historical quotes endpoint supports `feed=boats`, bounded `start`/`end` timestamps, and both single-symbol and batch queries. A credentialed SNXX quote query around 20:05 ET can therefore test whether a valid bid/ask existed without a trade bar. This has not yet been verified for SNXX. See Alpaca's [historical quotes endpoint](https://docs.alpaca.markets/us/reference/stockquotes-1) and [24/5 feed matrix](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api).
+
+### 7.2 Remaining validation gates
 
 Do not implement a production scheduler until all of these pass on the intended account:
 
