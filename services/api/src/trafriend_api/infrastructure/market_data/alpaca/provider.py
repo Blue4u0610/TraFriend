@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 import httpx
 
 from trafriend_api.application.ports.overnight_market_data import (
+    HistoricalOvernightMarketDataProvider,
     OvernightMarketDataProvider,
 )
 from trafriend_api.domain.errors import (
@@ -17,6 +18,8 @@ from trafriend_api.domain.errors import (
 )
 from trafriend_api.domain.overnight import (
     DataQuality,
+    HistoricalOvernightBar,
+    HistoricalOvernightQuote,
     OvernightBar,
     OvernightQuote,
     PriceBasis,
@@ -27,7 +30,9 @@ UTC = timezone.utc
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.-]{1,16}$")
 
 
-class AlpacaMarketDataProvider(OvernightMarketDataProvider):
+class AlpacaMarketDataProvider(
+    OvernightMarketDataProvider, HistoricalOvernightMarketDataProvider
+):
     """Alpaca HTTP adapter for BOATS bars and overnight/BOATS quotes."""
 
     def __init__(
@@ -125,6 +130,29 @@ class AlpacaMarketDataProvider(OvernightMarketDataProvider):
         end: datetime,
         timeframe: str,
     ) -> Sequence[OvernightBar]:
+        detailed_bars = self.get_historical_overnight_bars(
+            symbols, start, end, timeframe
+        )
+        return tuple(
+            OvernightBar(
+                symbol=bar.symbol,
+                open_price=bar.open_price,
+                starts_at=bar.starts_at,
+                observed_at=bar.observed_at,
+                source=bar.source,
+                source_feed=bar.source_feed,
+                quality=bar.quality,
+            )
+            for bar in detailed_bars
+        )
+
+    def get_historical_overnight_bars(
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        timeframe: str,
+    ) -> Sequence[HistoricalOvernightBar]:
         normalized = self._normalize_symbols(symbols)
         self._require_aware(start)
         self._require_aware(end)
@@ -159,7 +187,9 @@ class AlpacaMarketDataProvider(OvernightMarketDataProvider):
                     continue
                 for raw_bar in raw_bars:
                     if isinstance(raw_bar, Mapping):
-                        parsed = self._parse_bar(symbol, raw_bar, observed_at)
+                        parsed = self._parse_historical_bar(
+                            symbol, raw_bar, observed_at
+                        )
                         if parsed is None:
                             raise ProviderUnavailableError(
                                 "Alpaca returned malformed data for a requested bar"
@@ -168,7 +198,57 @@ class AlpacaMarketDataProvider(OvernightMarketDataProvider):
             page_token = payload.get("next_page_token")
             if not isinstance(page_token, str) or not page_token:
                 break
-        return tuple(bars)
+        return tuple(sorted(bars, key=lambda bar: (bar.starts_at, bar.symbol)))
+
+    def get_historical_overnight_quotes(
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+    ) -> Sequence[HistoricalOvernightQuote]:
+        normalized = self._normalize_symbols(symbols)
+        self._require_aware(start)
+        self._require_aware(end)
+        if start >= end:
+            raise ValueError("quote start must precede quote end")
+
+        quotes = []
+        page_token = None
+        while True:
+            params = {
+                "symbols": ",".join(normalized),
+                "start": self._format_rfc3339(start),
+                "end": self._format_rfc3339(end),
+                "feed": self._bars_feed,
+                "sort": "asc",
+                "limit": "10000",
+            }
+            if page_token:
+                params["page_token"] = page_token
+            observed_at = self._utc_now()
+            payload = self._request_json("/v2/stocks/quotes", params)
+            quotes_payload = payload.get("quotes")
+            if not isinstance(quotes_payload, Mapping):
+                raise ProviderUnavailableError(
+                    "Alpaca returned a malformed historical quote response"
+                )
+            for symbol in normalized:
+                raw_quotes = quotes_payload.get(symbol, ())
+                if not isinstance(raw_quotes, list):
+                    continue
+                for raw_quote in raw_quotes:
+                    if isinstance(raw_quote, Mapping):
+                        parsed = self._parse_historical_quote(
+                            symbol, raw_quote, observed_at
+                        )
+                        if parsed is not None:
+                            quotes.append(parsed)
+            page_token = payload.get("next_page_token")
+            if not isinstance(page_token, str) or not page_token:
+                break
+        return tuple(
+            sorted(quotes, key=lambda quote: (quote.market_timestamp, quote.symbol))
+        )
 
     def _parse_quote(
         self, symbol: str, raw: Mapping[str, Any], observed_at: datetime
@@ -192,15 +272,23 @@ class AlpacaMarketDataProvider(OvernightMarketDataProvider):
             price_basis=PriceBasis.QUOTE_MIDPOINT,
         )
 
-    def _parse_bar(
+    def _parse_historical_bar(
         self, symbol: str, raw: Mapping[str, Any], observed_at: datetime
-    ) -> Optional[OvernightBar]:
+    ) -> Optional[HistoricalOvernightBar]:
         try:
             open_price = Decimal(str(raw["o"]))
+            high_price = Decimal(str(raw["h"]))
+            low_price = Decimal(str(raw["l"]))
+            close_price = Decimal(str(raw["c"]))
+            volume = Decimal(str(raw["v"]))
             starts_at = self._parse_rfc3339(str(raw["t"]))
-            return OvernightBar(
+            return HistoricalOvernightBar(
                 symbol=symbol,
                 open_price=open_price,
+                high_price=high_price,
+                low_price=low_price,
+                close_price=close_price,
+                volume=volume,
                 starts_at=starts_at,
                 observed_at=observed_at,
                 source=self.provider_code,
@@ -209,6 +297,28 @@ class AlpacaMarketDataProvider(OvernightMarketDataProvider):
             )
         except (KeyError, InvalidOperation, ValueError):
             return None
+
+    def _parse_historical_quote(
+        self, symbol: str, raw: Mapping[str, Any], observed_at: datetime
+    ) -> Optional[HistoricalOvernightQuote]:
+        try:
+            bid = Decimal(str(raw["bp"]))
+            ask = Decimal(str(raw["ap"]))
+            timestamp = self._parse_rfc3339(str(raw["t"]))
+        except (KeyError, InvalidOperation, ValueError):
+            return None
+        if not bid.is_finite() or not ask.is_finite() or bid <= 0 or ask <= 0:
+            return None
+        return HistoricalOvernightQuote(
+            symbol=symbol,
+            bid_price=bid,
+            ask_price=ask,
+            market_timestamp=timestamp,
+            observed_at=observed_at,
+            source=self.provider_code,
+            source_feed=self._bars_feed,
+            quality=self._bars_quality,
+        )
 
     def _request_json(self, path: str, params: Mapping[str, Any]) -> Dict[str, Any]:
         try:

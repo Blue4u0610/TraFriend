@@ -74,6 +74,37 @@ class OvernightBar:
 
 
 @dataclass(frozen=True)
+class HistoricalOvernightBar:
+    """Normalized OHLCV bar retained only for manual provider diagnostics."""
+
+    symbol: str
+    open_price: Decimal
+    high_price: Decimal
+    low_price: Decimal
+    close_price: Decimal
+    volume: Decimal
+    starts_at: datetime
+    observed_at: datetime
+    source: str
+    source_feed: str
+    quality: DataQuality
+
+    def __post_init__(self) -> None:
+        _require_positive(self.open_price, "open_price")
+        _require_positive(self.high_price, "high_price")
+        _require_positive(self.low_price, "low_price")
+        _require_positive(self.close_price, "close_price")
+        if self.high_price < max(self.open_price, self.close_price):
+            raise ValueError("high_price cannot be below open_price or close_price")
+        if self.low_price > min(self.open_price, self.close_price):
+            raise ValueError("low_price cannot be above open_price or close_price")
+        if not self.volume.is_finite() or self.volume < 0:
+            raise ValueError("volume must be finite and non-negative")
+        _require_aware(self.starts_at, "starts_at")
+        _require_aware(self.observed_at, "observed_at")
+
+
+@dataclass(frozen=True)
 class OvernightQuote:
     symbol: str
     price: Decimal
@@ -88,6 +119,30 @@ class OvernightQuote:
         _require_positive(self.price, "price")
         _require_aware(self.market_timestamp, "market_timestamp")
         _require_aware(self.observed_at, "observed_at")
+
+
+@dataclass(frozen=True)
+class HistoricalOvernightQuote:
+    """Normalized two-sided quote retained only for manual provider diagnostics."""
+
+    symbol: str
+    bid_price: Decimal
+    ask_price: Decimal
+    market_timestamp: datetime
+    observed_at: datetime
+    source: str
+    source_feed: str
+    quality: DataQuality
+
+    def __post_init__(self) -> None:
+        _require_positive(self.bid_price, "bid_price")
+        _require_positive(self.ask_price, "ask_price")
+        _require_aware(self.market_timestamp, "market_timestamp")
+        _require_aware(self.observed_at, "observed_at")
+
+    @property
+    def midpoint(self) -> Decimal:
+        return (self.bid_price + self.ask_price) / Decimal("2")
 
 
 @dataclass(frozen=True)

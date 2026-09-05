@@ -168,12 +168,18 @@ OvernightMarketDataProvider
   get_overnight_snapshot(symbols, target_timestamp) -> normalized quotes
   get_overnight_bars(symbols, start, end, timeframe) -> normalized bars
 
+HistoricalOvernightMarketDataProvider
+  get_historical_overnight_bars(symbols, start, end, timeframe) -> normalized OHLCV bars
+  get_historical_overnight_quotes(symbols, start, end) -> normalized two-sided quotes
+
 OvernightReferenceRepository
   save(capture) -> immutable version
   latest(trading_date, reference_type, symbols) -> capture
 ```
 
 Repository ports are separate from external-data ports. This prevents vendor switching from affecting storage or use cases.
+
+The historical interface is a bounded, read-only manual-diagnostic port. It is not used by calculator reads or public routes and does not expand the production `OVERNIGHT_OPEN` window.
 
 Every market data adapter must:
 

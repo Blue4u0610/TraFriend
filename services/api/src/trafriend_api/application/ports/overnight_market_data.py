@@ -5,6 +5,8 @@ from datetime import date, datetime
 from typing import Sequence
 
 from trafriend_api.domain.overnight import (
+    HistoricalOvernightBar,
+    HistoricalOvernightQuote,
     OvernightBar,
     OvernightQuote,
     OvernightReferenceCapture,
@@ -52,6 +54,29 @@ class OvernightMarketDataProvider(ABC):
         raise NotImplementedError
 
 
+class HistoricalOvernightMarketDataProvider(ABC):
+    """Read-only provider port for bounded manual historical diagnostics."""
+
+    @abstractmethod
+    def get_historical_overnight_bars(
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        timeframe: str,
+    ) -> Sequence[HistoricalOvernightBar]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_historical_overnight_quotes(
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+    ) -> Sequence[HistoricalOvernightQuote]:
+        raise NotImplementedError
+
+
 class TradingCalendar(ABC):
     @abstractmethod
     def is_trading_day(self, trading_date: date) -> bool:
@@ -71,4 +96,3 @@ class OvernightReferenceRepository(ABC):
         symbols: Sequence[str],
     ) -> OvernightReferenceCapture:
         raise NotImplementedError
-

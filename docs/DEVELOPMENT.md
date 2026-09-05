@@ -100,6 +100,20 @@ Choose a previous valid exchange trading date. On Alpaca's free plan, the reques
 
 The command requests one batch of `feed=boats`, searches from 20:00 through 20:15 ET on the prior calendar evening, and selects the first valid one-minute bar for each symbol. Free-plan defaults label those historical bars `DELAYED`. A missing 20:00 bar may select the first later bar inside the window; a bar before 20:00 or from a previous session is never used.
 
+### Diagnose a complete historical overnight session
+
+Use the separate read-only diagnostic command when investigating liquidity outside the production opening window or historical two-sided BOATS quotes. This does not capture a reference set or alter the 20:00-20:15 `OVERNIGHT_OPEN` policy:
+
+```bash
+.venv/bin/python -m trafriend_api.scripts.diagnose_overnight_history \
+  --symbols SNDK,SNXX \
+  --date 2026-09-04 \
+  --quote-time 20:05 \
+  --quote-window-seconds 60
+```
+
+The command requests the complete 20:00-04:00 ET session as `feed=boats` one-minute bars and a bounded historical quote window centered on the requested Eastern time. It reports OHLCV for the first bar, the final bar, and the valid two-sided quote closest to the target. Exact-distance quote ties choose the earlier timestamp. Historical quote and bar quality use the configured BOATS historical quality, which defaults to `DELAYED` for the free plan.
+
 ### Test live `OVERNIGHT_SNAPSHOT`
 
 Run this close to 20:05 ET on a Sunday-through-Thursday evening whose following date is an XNYS trading day. From the 2026-09-05 development date, the next test window is Monday 2026-09-07 around 20:05 ET for trading date 2026-09-08; Sunday night is closed because Monday is Labor Day:
