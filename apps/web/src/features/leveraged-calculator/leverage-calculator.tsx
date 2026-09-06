@@ -33,32 +33,80 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Dictionary } from "@/i18n/dictionaries";
 import { interpolate } from "@/i18n/dictionaries";
 import { useLocale } from "@/i18n/locale-provider";
-import { ApiError, calculateTarget, getLeveragedProducts, getReference } from "@/lib/api/client";
+import {
+  ApiError,
+  calculateTarget,
+  getDailyCloseAnchor,
+  getLeveragedProducts,
+} from "@/lib/api/client";
 import type {
   Calculation,
-  DailyReference,
+  DailyCloseAnchor,
   LeveragedProducts,
   Relationship,
 } from "@/lib/api/types";
 
 type InputSide = "underlying" | "leveraged_product";
 
-function formatMoney(value: string, locale: string) {
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+function quantizeDecimal(value: string, places: number, decimalShift = 0) {
+  const match = value.trim().match(/^(-?)(\d+)(?:\.(\d*))?$/);
+  if (!match) return null;
+  const [, sign, whole, fraction = ""] = match;
+  const digits = BigInt(`${whole}${fraction}`);
+  const targetScale = places + decimalShift;
+  const sourceScale = fraction.length;
+  let scaled: bigint;
+  if (targetScale >= sourceScale) {
+    scaled = digits * BigInt(10) ** BigInt(targetScale - sourceScale);
+  } else {
+    const divisor = BigInt(10) ** BigInt(sourceScale - targetScale);
+    const quotient = digits / divisor;
+    const remainder = digits % divisor;
+    scaled =
+      quotient +
+      (remainder * BigInt(2) >= divisor ? BigInt(1) : BigInt(0));
+  }
+  const placeScale = BigInt(10) ** BigInt(places);
+  return {
+    negative: sign === "-" && scaled !== BigInt(0),
+    whole: scaled / placeScale,
+    fraction: (scaled % placeScale).toString().padStart(places, "0"),
+  };
 }
 
-function formatPercent(value: string) {
-  return `${(Number(value) * 100).toFixed(2)}%`;
+function formatMoney(value: string, locale: string) {
+  const rounded = quantizeDecimal(value, 2);
+  if (!rounded) return value;
+  const formatter = new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+  });
+  const parts = formatter.formatToParts(0);
+  const symbol = parts.find((part) => part.type === "currency")?.value ?? "$";
+  const decimal = parts.find((part) => part.type === "decimal")?.value ?? ".";
+  const symbolFirst =
+    parts.findIndex((part) => part.type === "currency") <
+    parts.findIndex((part) => part.type === "integer");
+  const number = `${rounded.negative ? "-" : ""}${new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+  }).format(rounded.whole)}${decimal}${rounded.fraction}`;
+  return symbolFirst ? `${symbol}${number}` : `${number}${symbol}`;
+}
+
+function formatPercent(value: string, locale: string) {
+  const rounded = quantizeDecimal(value, 2, 2);
+  if (!rounded) return value;
+  const decimal =
+    new Intl.NumberFormat(locale)
+      .formatToParts(1.1)
+      .find((part) => part.type === "decimal")?.value ?? ".";
+  return `${rounded.negative ? "-" : ""}${new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+  }).format(rounded.whole)}${decimal}${rounded.fraction}%`;
 }
 
 function leverageLabel(factor: string) {
-  const value = Number(factor);
-  return `${value > 0 ? "+" : ""}${value}x`;
+  return `${factor.startsWith("-") ? "" : "+"}${factor}x`;
 }
 
 function getErrorMessage(
@@ -68,8 +116,8 @@ function getErrorMessage(
   if (error instanceof ApiError) {
     const messages: Record<string, string> = {
       RESOURCE_NOT_FOUND: t.errors.notFound,
-      REFERENCE_VERSION_INACTIVE: t.errors.referenceChanged,
-      REFERENCE_UNAVAILABLE: t.errors.referenceUnavailable,
+      ANCHOR_VERSION_INACTIVE: t.errors.anchorChanged,
+      ANCHOR_UNAVAILABLE: t.errors.anchorUnavailable,
       CALCULATION_OUT_OF_DOMAIN: t.errors.outOfDomain,
       VALIDATION_ERROR: t.errors.validation,
     };
@@ -83,7 +131,7 @@ export function LeverageCalculator() {
   const t = dictionary.calculator;
   const [products, setProducts] = useState<LeveragedProducts | null>(null);
   const [relationshipId, setRelationshipId] = useState("");
-  const [reference, setReference] = useState<DailyReference | null>(null);
+  const [anchor, setAnchor] = useState<DailyCloseAnchor | null>(null);
   const [inputSide, setInputSide] = useState<InputSide>("underlying");
   const [targetPrice, setTargetPrice] = useState("");
   const [result, setResult] = useState<Calculation | null>(null);
@@ -113,11 +161,18 @@ export function LeverageCalculator() {
   useEffect(() => {
     if (!relationshipId) return;
     let active = true;
-    getReference(relationshipId)
+    getDailyCloseAnchor(relationshipId)
       .then(({ data }) => {
         if (!active) return;
-        setReference(data);
-        setTargetPrice(Number(data.underlying.price).toFixed(2));
+        if (
+          data.status !== "COMPLETE" ||
+          data.underlying.close === null ||
+          data.leveraged_product.close === null
+        ) {
+          throw new ApiError(t.errors.anchorUnavailable, "ANCHOR_UNAVAILABLE", 503);
+        }
+        setAnchor(data);
+        setTargetPrice(data.underlying.close);
       })
       .catch((requestError) => {
         if (active) setError(getErrorMessage(requestError, t));
@@ -135,7 +190,7 @@ export function LeverageCalculator() {
 
   useEffect(() => {
     const context = document.modelContext;
-    if (!context?.registerTool || !relationship || !reference) return;
+    if (!context?.registerTool || !relationship || !anchor) return;
 
     const lifecycle = new AbortController();
     const registration = context.registerTool(
@@ -180,7 +235,7 @@ export function LeverageCalculator() {
           setError(null);
           const response = await calculateTarget({
             relationship_id: relationship.id,
-            reference_version_id: reference.id,
+            anchor_version_id: anchor.id,
             input_side: nextSide,
             target_price: nextPrice,
           });
@@ -190,7 +245,7 @@ export function LeverageCalculator() {
             theoreticalTargetPrice:
               response.data.output.theoretical_target_price,
             formulaVersion: response.data.formula_version,
-            referenceVersionId: response.data.reference.id,
+            anchorVersionId: response.data.anchor.id,
           };
         },
       },
@@ -198,12 +253,12 @@ export function LeverageCalculator() {
     );
     void Promise.resolve(registration).catch(() => undefined);
     return () => lifecycle.abort();
-  }, [reference, relationship, t]);
+  }, [anchor, relationship, t]);
 
   function handleRelationshipChange(value: unknown) {
     setRelationshipId(String(value));
     setInputSide("underlying");
-    setReference(null);
+    setAnchor(null);
     setResult(null);
     setError(null);
   }
@@ -213,18 +268,18 @@ export function LeverageCalculator() {
     setInputSide(nextSide);
     setResult(null);
     setError(null);
-    if (reference) {
+    if (anchor) {
       const nextValue =
         nextSide === "underlying"
-          ? reference.underlying.price
-          : reference.leveraged_product.price;
-      setTargetPrice(Number(nextValue).toFixed(2));
+          ? anchor.underlying.close
+          : anchor.leveraged_product.close;
+      setTargetPrice(nextValue ?? "");
     }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!relationship || !reference) return;
+    if (!relationship || !anchor) return;
 
     setIsCalculating(true);
     setError(null);
@@ -232,7 +287,7 @@ export function LeverageCalculator() {
     try {
       const response = await calculateTarget({
         relationship_id: relationship.id,
-        reference_version_id: reference.id,
+        anchor_version_id: anchor.id,
         input_side: inputSide,
         target_price: targetPrice,
       });
@@ -284,7 +339,7 @@ export function LeverageCalculator() {
                       </span>
                       <span
                         className={
-                          Number(relationship.leverage_factor) > 0
+                          !relationship.leverage_factor.startsWith("-")
                             ? "text-primary"
                             : "text-amber-300"
                         }
@@ -301,7 +356,7 @@ export function LeverageCalculator() {
                     <span className="font-mono">{item.underlying.symbol}</span>
                     <ArrowRight className="size-3.5 text-muted-foreground" />
                     <span className="font-mono">{item.leveraged_product.symbol}</span>
-                    <span className={Number(item.leverage_factor) > 0 ? "text-primary" : "text-amber-300"}>
+                    <span className={!item.leverage_factor.startsWith("-") ? "text-primary" : "text-amber-300"}>
                       {leverageLabel(item.leverage_factor)}
                     </span>
                   </SelectItem>
@@ -310,23 +365,23 @@ export function LeverageCalculator() {
             </Select>
           </div>
 
-          {reference && relationship ? (
+          {anchor && relationship ? (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
                   {
-                    label: t.underlyingReference,
-                    symbol: reference.underlying.symbol,
-                    price: reference.underlying.price,
+                    label: t.underlyingClose,
+                    symbol: anchor.underlying.symbol,
+                    price: anchor.underlying.close,
                   },
                   {
-                    label: interpolate(t.etfReference, {
+                    label: interpolate(t.etfClose, {
                       leverage: leverageLabel(relationship.leverage_factor),
                     }),
-                    symbol: reference.leveraged_product.symbol,
-                    price: reference.leveraged_product.price,
+                    symbol: anchor.leveraged_product.symbol,
+                    price: anchor.leveraged_product.close,
                   },
-                ].map((item) => (
+                ].map((item) => item.price !== null && (
                   <div key={item.symbol} className="rounded-xl border border-white/[0.08] bg-background/45 p-4">
                     <p className="data-label">{item.label}</p>
                     <div className="mt-3 flex items-end justify-between gap-3">
@@ -342,11 +397,11 @@ export function LeverageCalculator() {
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
                 <span className="inline-flex items-center gap-2">
                   <CalendarClock className="size-4 text-primary" aria-hidden="true" />
-                  {interpolate(t.tradingDate, { date: reference.trading_date })}
+                  {interpolate(t.tradingDate, { date: anchor.trading_date })}
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <Database className="size-4 text-primary" aria-hidden="true" />
-                  {interpolate(t.provider, { provider: reference.provider })}
+                  {interpolate(t.provider, { provider: anchor.provider })}
                 </span>
               </div>
 
@@ -399,7 +454,7 @@ export function LeverageCalculator() {
                     />
                   </div>
                   <p id="target-help" className="text-sm leading-6 text-muted-foreground">
-                    {interpolate(t.referenceHelp, { version: reference.version })}
+                    {interpolate(t.anchorHelp, { version: anchor.version })}
                   </p>
                 </div>
 
@@ -453,14 +508,14 @@ export function LeverageCalculator() {
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-white/[0.08] bg-background/45 p-4">
                   <p className="data-label">{t.underlyingMove}</p>
-                  <p className={`mt-2 font-mono text-xl ${Number(result.underlying_return) >= 0 ? "text-primary" : "text-rose-300"}`}>
-                    {formatPercent(result.underlying_return)}
+                  <p className={`mt-2 font-mono text-xl ${result.underlying_return.startsWith("-") ? "text-rose-300" : "text-primary"}`}>
+                    {formatPercent(result.underlying_return, locale)}
                   </p>
                 </div>
                 <div className="rounded-xl border border-white/[0.08] bg-background/45 p-4">
                   <p className="data-label">{t.leveragedMove}</p>
-                  <p className={`mt-2 font-mono text-xl ${Number(result.leveraged_return) >= 0 ? "text-primary" : "text-rose-300"}`}>
-                    {formatPercent(result.leveraged_return)}
+                  <p className={`mt-2 font-mono text-xl ${result.leveraged_return.startsWith("-") ? "text-rose-300" : "text-primary"}`}>
+                    {formatPercent(result.leveraged_return, locale)}
                   </p>
                 </div>
               </div>
@@ -470,7 +525,7 @@ export function LeverageCalculator() {
                   {t.singleDayWarning}
                 </p>
                 <p className="mt-3 font-mono text-xs text-muted-foreground">
-                  {result.formula_version} · {result.reference.id}
+                  {result.formula_version} · {result.anchor.id}
                 </p>
               </div>
             </div>

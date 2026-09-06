@@ -6,7 +6,7 @@ This file applies to the entire repository. A more specific `AGENTS.md` may add 
 
 TraFriend is a public U.S. stock market analytics website. Its first tools are:
 
-1. A single-day leveraged ETF theoretical price calculator anchored to Daily Reference Prices.
+1. A single-day leveraged ETF theoretical price calculator anchored to Daily Close Anchors.
 2. Current and historical Profit Ratio analytics.
 
 TraFriend is an information and research product, not a brokerage, trade execution system, investment adviser, or multi-day leveraged ETF prediction engine.
@@ -55,7 +55,7 @@ Phase 1 provides a Next.js frontend and a mock-first FastAPI backend. Keep devel
 - Use timezone-aware UTC instants and an injected U.S. exchange calendar for trading dates and session behavior.
 - Use Python `Decimal` for authoritative prices, leverage, ratios, returns, and calculations. Do not use binary floating point for financial rules.
 - Return typed domain/application errors and map them to stable public error codes. Never leak vendor errors, stack traces, connection details, or secrets.
-- Calculation reads use stored active reference sets and must not make a live provider request.
+- Calculation reads use stored complete Daily Close Anchors and must not make a live provider request.
 
 ## Financial calculation rules
 
@@ -78,7 +78,7 @@ underlying_target = underlying_reference * (1 + underlying_return)
 Guardrails:
 
 - Signed leverage is metadata from an active relationship, not user-supplied authoritative input.
-- Reference prices come from one active immutable Daily Reference Price version, not from the client.
+- Reference prices come from one active immutable Daily Close Anchor version, not from the client.
 - Inputs and references must be finite and positive; leverage must be finite and non-zero.
 - A computed price less than or equal to zero is outside the model domain. Return a clear error; never clamp it to zero or show it as a valid price.
 - Do not add compounding, volatility decay, fees, distributions, tracking error, or multi-day prediction to this formula without an approved product/architecture change.
@@ -87,16 +87,17 @@ Guardrails:
 
 Every formula change requires automated unit tests, boundary tests, signed-leverage coverage, and forward/reverse round-trip coverage. A UI snapshot or manual calculator check is not sufficient.
 
-## Daily Reference Price rules
+## Daily Close Anchor rules
 
-- Capture one coherent underlying/leveraged ETF pair for the configured beginning of each U.S. overnight session.
-- Derive the intended trading date through the exchange calendar; do not equate it with server `CURRENT_DATE`.
-- Validate price positivity, quote freshness, currency, capture window, and pair timestamp skew.
-- Publish a pair only after both quotes are valid and stored atomically.
-- Never silently mix providers, dates, sessions, relationships, or reference versions in one calculation.
-- Never silently fall back to yesterday when today's reference is missing or stale.
+- Capture one coherent underlying/leveraged ETF pair from the latest completed U.S. regular-session closes.
+- Derive the completed trading date and actual close instant through the exchange calendar; do not equate it with server `CURRENT_DATE` or wall-clock hour.
+- Validate price positivity, expected same trading date, provider/feed provenance, quality, currency, and timestamps.
+- Publish a pair only after both daily closes are valid and stored atomically.
+- Never silently mix providers, dates, sessions, relationships, or anchor versions in one calculation.
+- Never silently fall back to an earlier session when the expected completed-session close is missing, stale, or delayed at the provider.
 - Capture retries are idempotent. Corrections create a higher immutable version, record a reason, and preserve the prior version/audit history.
-- Public results include reference version, trading date, quote timestamps, provider label, and single-day warning.
+- Public results include anchor version/type, trading date, market timestamps, provider/feed labels, and single-day warning.
+- Keep `OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` infrastructure separate from calculator anchors. Their diagnostic policies do not define the daily reset boundary.
 
 ## Provider rules
 
@@ -116,7 +117,7 @@ Every formula change requires automated unit tests, boundary tests, signed-lever
 - Keep values in fractional units and enforce the inclusive range `[0, 1]`.
 - Do not silently merge incompatible methodology versions, interpolate gaps, or forward-fill missing values.
 - Profit Ratio OHLC is allowed only when multiple genuine observations support meaningful open/high/low/close values and bar boundaries are documented.
-- Keep historical comparison price bars separate from Daily Reference Prices.
+- Keep historical comparison price bars separate from Daily Close Anchors.
 
 ## Security and secrets
 

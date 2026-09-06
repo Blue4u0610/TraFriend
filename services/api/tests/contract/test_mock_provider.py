@@ -1,11 +1,19 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
+from trafriend_api.application.ports.daily_close import DailyCloseMarketDataProvider
 from trafriend_api.application.ports.market_data import MarketDataProvider
 from trafriend_api.application.ports.overnight_market_data import OvernightMarketDataProvider
+from trafriend_api.application.services.daily_close_anchor import DailyCloseAnchorService
 from trafriend_api.application.services.market_data import MarketDataService
-from trafriend_api.domain.errors import ReferenceUnavailableError, ResourceNotFoundError
+from trafriend_api.domain.daily_close import DailyCloseAnchorStatus, DailyCloseQuality
+from trafriend_api.domain.errors import AnchorUnavailableError
+from trafriend_api.infrastructure.calendar import NyseTradingCalendar
 from trafriend_api.infrastructure.market_data.mock import MockMarketDataProvider
+from trafriend_api.infrastructure.persistence import InMemoryDailyCloseAnchorRepository
+
+UTC = timezone.utc
+NOW = datetime(2026, 9, 4, 21, tzinfo=UTC)
 
 
 def test_mock_provider_conforms_to_market_data_port() -> None:
@@ -13,6 +21,7 @@ def test_mock_provider_conforms_to_market_data_port() -> None:
 
     assert isinstance(provider, MarketDataProvider)
     assert isinstance(provider, OvernightMarketDataProvider)
+    assert isinstance(provider, DailyCloseMarketDataProvider)
     assert provider.provider_code == "mock"
     assert provider.capabilities.true_overnight
     assert provider.capabilities.batch_quotes
@@ -27,12 +36,12 @@ def test_mock_provider_conforms_to_market_data_port() -> None:
         Decimal("-3"),
     }
 
-    reference = provider.get_reference("rel_qqq_tqqq_3x")
-    assert reference.underlying.price > 0
-    assert reference.leveraged_product.price > 0
-    assert reference.underlying.quoted_at.tzinfo is not None
-    assert reference.leveraged_product.quoted_at.tzinfo is not None
-    assert reference.provider == "mock"
+    bars = provider.get_daily_close_bars(
+        ("QQQ", "TQQQ"), date(2026, 9, 4), date(2026, 9, 4)
+    )
+    assert [bar.close for bar in bars] == [Decimal("480.00"), Decimal("82.50")]
+    assert all(bar.quality == DailyCloseQuality.REALTIME for bar in bars)
+    assert all(bar.source == "mock" for bar in bars)
 
     history = provider.get_profit_ratio_history(
         "ins_nvda_xnas", date(2026, 9, 1), date(2026, 9, 4)
@@ -48,50 +57,54 @@ def test_named_mock_scenarios_are_deterministic() -> None:
     assert MockMarketDataProvider("inverse").get_relationship(
         "rel_qqq_sqqq_n3x"
     ).leverage_factor == Decimal("-3")
-    assert (
-        MockMarketDataProvider("stale")
-        .get_reference("rel_qqq_tqqq_3x")
-        .freshness
-        == "stale"
+    stale = MockMarketDataProvider("stale", now=lambda: NOW).get_daily_close_bars(
+        ("QQQ", "TQQQ"), date(2026, 9, 4), date(2026, 9, 4)
     )
-    assert (
-        MockMarketDataProvider("boundary")
-        .get_reference("rel_qqq_tqqq_3x")
-        .underlying.price
-        == Decimal("0.01000000")
+    assert all(bar.quality == DailyCloseQuality.STALE for bar in stale)
+    boundary = MockMarketDataProvider(
+        "boundary", now=lambda: NOW
+    ).get_daily_close_bars(
+        ("QQQ", "TQQQ"), date(2026, 9, 4), date(2026, 9, 4)
     )
+    assert all(bar.close == Decimal("0.01000000") for bar in boundary)
 
     for scenario in ("missing", "holiday"):
-        provider = MockMarketDataProvider(scenario)
-        try:
-            provider.get_reference("rel_qqq_tqqq_3x")
-        except ResourceNotFoundError:
-            pass
-        else:
-            raise AssertionError(f"{scenario} scenario should not publish references")
+        bars = MockMarketDataProvider(
+            scenario, now=lambda: NOW
+        ).get_daily_close_bars(
+            ("QQQ", "TQQQ"), date(2026, 9, 4), date(2026, 9, 4)
+        )
+        assert bars == ()
 
-    partial = MockMarketDataProvider("partial")
-    assert partial.get_reference("rel_qqq_tqqq_3x")
-    try:
-        partial.get_reference("rel_nvda_nvdl_2x")
-    except ResourceNotFoundError:
-        pass
-    else:
-        raise AssertionError("partial scenario should omit the NVDA reference")
+    partial = MockMarketDataProvider(
+        "partial", now=lambda: NOW
+    ).get_daily_close_bars(
+        ("QQQ", "TQQQ"), date(2026, 9, 4), date(2026, 9, 4)
+    )
+    assert [bar.symbol for bar in partial] == ["QQQ"]
 
 
-def test_stale_reference_cannot_be_used_for_calculation() -> None:
-    service = MarketDataService(MockMarketDataProvider("stale"))
-    reference = service.get_reference("rel_qqq_tqqq_3x")
+def test_incomplete_anchor_cannot_be_used_for_calculation() -> None:
+    provider = MockMarketDataProvider("stale", now=lambda: NOW)
+    anchor_service = DailyCloseAnchorService(
+        provider=provider,
+        calendar=NyseTradingCalendar(),
+        repository=InMemoryDailyCloseAnchorRepository(),
+        now=lambda: NOW,
+    )
+    anchor = anchor_service.capture("rel_qqq_tqqq_3x", "QQQ", "TQQQ")
+    service = MarketDataService(provider, anchor_service)
+
+    assert anchor.status == DailyCloseAnchorStatus.UNAVAILABLE
 
     try:
         service.calculate(
             relationship_id="rel_qqq_tqqq_3x",
-            reference_version_id=reference.id,
+            anchor_version_id=anchor.id,
             input_side="underlying",
             target_price=Decimal("500"),
         )
-    except ReferenceUnavailableError:
+    except AnchorUnavailableError:
         pass
     else:
-        raise AssertionError("stale reference should not be eligible for calculation")
+        raise AssertionError("incomplete anchor should not be eligible for calculation")

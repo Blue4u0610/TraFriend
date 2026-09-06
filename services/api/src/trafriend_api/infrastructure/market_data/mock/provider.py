@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Dict, Sequence, Tuple
+from typing import Callable, Dict, Sequence, Tuple
 
+from trafriend_api.application.ports.daily_close import DailyCloseMarketDataProvider
 from trafriend_api.application.ports.market_data import MarketDataProvider
 from trafriend_api.application.ports.overnight_market_data import (
     OvernightMarketDataProvider,
 )
+from trafriend_api.domain.daily_close import DailyCloseBar, DailyCloseQuality
 from trafriend_api.domain.errors import (
     ProviderUnavailableError,
     ResourceNotFoundError,
     UnsupportedFeatureError,
 )
 from trafriend_api.domain.models import (
-    DailyReferenceSet,
     Instrument,
     InstrumentCapabilities,
     LeveragedRelationship,
@@ -23,7 +23,6 @@ from trafriend_api.domain.models import (
     ProfitRatioHistory,
     ProfitRatioMethodology,
     ProfitRatioPoint,
-    ReferencePrice,
 )
 from trafriend_api.domain.overnight import (
     DataQuality,
@@ -40,7 +39,9 @@ def _at(year: int, month: int, day: int, hour: int = 20) -> datetime:
     return datetime(year, month, day, hour, tzinfo=UTC)
 
 
-class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
+class MockMarketDataProvider(
+    MarketDataProvider, OvernightMarketDataProvider, DailyCloseMarketDataProvider
+):
     """Deterministic data source for local development and ordinary CI."""
 
     scenario_codes = (
@@ -58,16 +59,22 @@ class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
         "out_of_sync",
     )
 
-    def __init__(self, scenario_code: str = "normal") -> None:
+    def __init__(
+        self,
+        scenario_code: str = "normal",
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         if scenario_code not in self.scenario_codes:
             raise ValueError(f"unknown mock scenario: {scenario_code}")
         self.scenario_code = scenario_code
         self._instruments = self._build_instruments()
         self._relationships = self._build_relationships()
-        self._references = self._build_references()
         self._profit_histories = self._build_profit_histories()
+        self._now = now
         self.overnight_request_log: list[Tuple[str, Tuple[str, ...]]] = []
-        self._apply_scenario()
+        self.daily_close_request_log: list[
+            Tuple[Tuple[str, ...], date, date]
+        ] = []
 
     @property
     def provider_code(self) -> str:
@@ -76,6 +83,10 @@ class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
     @property
     def source_feed(self) -> str:
         return "mock-boats"
+
+    @property
+    def daily_close_feed(self) -> str:
+        return "mock-regular-close"
 
     @property
     def capabilities(self) -> ProviderCapabilities:
@@ -183,6 +194,77 @@ class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
             )
         return tuple(bars)
 
+    def get_daily_close_bars(
+        self, symbols: Sequence[str], start: date, end: date
+    ) -> Sequence[DailyCloseBar]:
+        if start > end:
+            raise ValueError("daily bar start cannot follow end")
+        normalized = tuple(symbol.strip().upper() for symbol in symbols)
+        self.daily_close_request_log.append((normalized, start, end))
+        if self.scenario_code == "provider_failure":
+            raise ProviderUnavailableError("mock provider is unavailable")
+        if self.scenario_code in {"missing", "holiday"}:
+            return ()
+
+        trading_date = (
+            end - timedelta(days=1) if self.scenario_code == "stale" else end
+        )
+        prices = self._daily_close_prices()
+        observed_at = self._now()
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("mock current time must be timezone-aware")
+        bars = []
+        for index, symbol in enumerate(normalized):
+            if symbol not in prices:
+                continue
+            if self.scenario_code == "partial" and index > 0:
+                continue
+            if self.scenario_code == "missing_underlying" and index == 0:
+                continue
+            close = (
+                Decimal("0.01000000")
+                if self.scenario_code == "boundary"
+                else prices[symbol]
+            )
+            bars.append(
+                DailyCloseBar(
+                    symbol=symbol,
+                    trading_date=trading_date,
+                    close=close,
+                    market_timestamp=datetime.combine(
+                        trading_date, datetime.min.time(), tzinfo=UTC
+                    ).replace(hour=4),
+                    observed_at=observed_at.astimezone(UTC),
+                    source=self.provider_code,
+                    source_feed=self.daily_close_feed,
+                    currency="USD",
+                    quality=(
+                        DailyCloseQuality.STALE
+                        if self.scenario_code == "stale"
+                        else DailyCloseQuality.REALTIME
+                    ),
+                )
+            )
+        return tuple(bars)
+
+    @staticmethod
+    def _daily_close_prices() -> Dict[str, Decimal]:
+        return {
+            "SNDK": Decimal("1740"),
+            "SNXX": Decimal("17.36"),
+            "NVDA": Decimal("170.00"),
+            "NVDL": Decimal("80.00"),
+            "TSLA": Decimal("340.00"),
+            "TSLL": Decimal("18.00"),
+            "QQQ": Decimal("480.00"),
+            "QLD": Decimal("120.00"),
+            "TQQQ": Decimal("82.50"),
+            "SQQQ": Decimal("31.20"),
+            "SOXX": Decimal("250.00"),
+            "SOXL": Decimal("45.00"),
+            "SOXS": Decimal("20.00"),
+        }
+
     @staticmethod
     def _overnight_prices() -> Dict[str, Tuple[Decimal, Decimal]]:
         return {
@@ -253,13 +335,6 @@ class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
             return self._relationships[relationship_id]
         except KeyError as exc:
             raise ResourceNotFoundError("leveraged product relationship was not found") from exc
-
-    def get_reference(self, relationship_id: str) -> DailyReferenceSet:
-        self.get_relationship(relationship_id)
-        try:
-            return self._references[relationship_id]
-        except KeyError as exc:
-            raise ResourceNotFoundError("Daily Reference Price set was not found") from exc
 
     def get_profit_ratio_history(
         self, instrument_id: str, start: date, end: date
@@ -381,42 +456,6 @@ class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
         )
         return {relationship.id: relationship for relationship in relationships}
 
-    def _build_references(self) -> Dict[str, DailyReferenceSet]:
-        quote_time = _at(2026, 9, 4, 0)
-        captured_at = _at(2026, 9, 4, 0).replace(minute=1)
-        prices: Dict[str, Tuple[str, str]] = {
-            "rel_qqq_tqqq_3x": ("480.00", "82.50"),
-            "rel_qqq_sqqq_n3x": ("480.00", "31.20"),
-            "rel_nvda_nvdl_2x": ("170.00", "80.00"),
-        }
-        references: Dict[str, DailyReferenceSet] = {}
-        for relationship_id, (underlying_price, leveraged_price) in prices.items():
-            relationship = self._relationships[relationship_id]
-            references[relationship_id] = DailyReferenceSet(
-                id=f"refv_{relationship_id}_20260904_1",
-                relationship_id=relationship_id,
-                trading_date=date(2026, 9, 4),
-                session="us_overnight_open",
-                status="active",
-                version=1,
-                underlying=ReferencePrice(
-                    instrument_id=relationship.underlying.id,
-                    symbol=relationship.underlying.symbol,
-                    price=Decimal(underlying_price),
-                    quoted_at=quote_time,
-                ),
-                leveraged_product=ReferencePrice(
-                    instrument_id=relationship.leveraged_product.id,
-                    symbol=relationship.leveraged_product.symbol,
-                    price=Decimal(leveraged_price),
-                    quoted_at=quote_time.replace(second=2),
-                ),
-                captured_at=captured_at,
-                provider=self.provider_code,
-                freshness="current",
-            )
-        return references
-
     def _build_profit_histories(self) -> Dict[str, ProfitRatioHistory]:
         methodology = ProfitRatioMethodology(
             id="mock-cost-basis-estimate",
@@ -460,44 +499,3 @@ class MockMarketDataProvider(MarketDataProvider, OvernightMarketDataProvider):
                 as_of=_at(2026, 9, 5, 2),
             )
         }
-
-    def _apply_scenario(self) -> None:
-        """Apply a named failure/boundary fixture without changing the default API."""
-
-        if self.scenario_code in {
-            "normal",
-            "inverse",
-            "missing_open",
-            "provider_failure",
-            "delayed",
-            "out_of_sync",
-            "missing_underlying",
-        }:
-            return
-        if self.scenario_code == "stale":
-            self._references = {
-                key: replace(reference, freshness="stale")
-                for key, reference in self._references.items()
-            }
-            return
-        if self.scenario_code in {"missing", "holiday"}:
-            self._references = {}
-            return
-        if self.scenario_code == "partial":
-            self._references = {
-                "rel_qqq_tqqq_3x": self._references["rel_qqq_tqqq_3x"]
-            }
-            return
-        if self.scenario_code == "boundary":
-            self._references = {
-                key: replace(
-                    reference,
-                    underlying=replace(
-                        reference.underlying, price=Decimal("0.01000000")
-                    ),
-                    leveraged_product=replace(
-                        reference.leveraged_product, price=Decimal("0.01000000")
-                    ),
-                )
-                for key, reference in self._references.items()
-            }

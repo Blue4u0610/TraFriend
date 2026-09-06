@@ -36,29 +36,6 @@ class LeveragedRelationship:
 
 
 @dataclass(frozen=True)
-class ReferencePrice:
-    instrument_id: str
-    symbol: str
-    price: Decimal
-    quoted_at: datetime
-
-
-@dataclass(frozen=True)
-class DailyReferenceSet:
-    id: str
-    relationship_id: str
-    trading_date: date
-    session: str
-    status: str
-    version: int
-    underlying: ReferencePrice
-    leveraged_product: ReferencePrice
-    captured_at: datetime
-    provider: str
-    freshness: str
-
-
-@dataclass(frozen=True)
 class ProfitRatioMethodology:
     id: str
     version: str
@@ -99,5 +76,4 @@ class CalculationResult:
     theoretical_target_price: Decimal
     underlying_return: Decimal
     leveraged_return: Decimal
-    formula_version: str = "leveraged-daily-linear/v1"
-
+    formula_version: str = "leveraged-daily-close-linear/v2"

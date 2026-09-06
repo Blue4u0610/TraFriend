@@ -38,25 +38,33 @@ export type LeveragedProducts = {
   relationships: Relationship[];
 };
 
-export type ReferencePrice = {
-  instrument_id: string;
+export type DailyCloseAnchorValue = {
   symbol: string;
-  price: string;
-  quoted_at: string;
+  close: string | null;
+  trading_date: string | null;
+  market_timestamp: string | null;
+  observed_at: string;
+  source: string;
+  source_feed: string;
+  currency: "USD";
+  quality: "REALTIME" | "DELAYED" | "STALE" | "UNAVAILABLE";
+  status: "AVAILABLE" | "REJECTED" | "MISSING";
+  message: string;
 };
 
-export type DailyReference = {
+export type DailyCloseAnchor = {
   id: string;
   relationship_id: string;
   trading_date: string;
-  session: string;
-  status: "active";
+  status: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
   version: number;
-  underlying: ReferencePrice;
-  leveraged_product: ReferencePrice;
+  underlying: DailyCloseAnchorValue;
+  leveraged_product: DailyCloseAnchorValue;
+  session_closed_at: string;
   captured_at: string;
-  provider: "mock";
-  freshness: "current" | "stale" | "unknown";
+  provider: string;
+  source_feed: string;
+  anchor_type: "DAILY_CLOSE_ANCHOR";
 };
 
 export type Calculation = {
@@ -78,15 +86,16 @@ export type Calculation = {
   };
   underlying_return: string;
   leveraged_return: string;
-  reference: {
+  anchor: {
     id: string;
+    anchor_type: "DAILY_CLOSE_ANCHOR";
     trading_date: string;
-    session: string;
-    underlying_price: string;
-    leveraged_product_price: string;
-    underlying_quoted_at: string;
-    leveraged_product_quoted_at: string;
+    underlying_close: string;
+    leveraged_product_close: string;
+    underlying_market_timestamp: string;
+    leveraged_product_market_timestamp: string;
     provider: string;
+    source_feed: string;
   };
   calculated_at: string;
   warnings: { code: string; message: string }[];
@@ -140,4 +149,3 @@ export type Health = {
   service: string;
   market_data_provider: "mock";
 };
-

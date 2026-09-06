@@ -1,7 +1,7 @@
 import type {
   ApiResponse,
   Calculation,
-  DailyReference,
+  DailyCloseAnchor,
   Health,
   Instrument,
   LeveragedProducts,
@@ -68,17 +68,17 @@ export function getLeveragedProducts(
   );
 }
 
-export function getReference(
+export function getDailyCloseAnchor(
   relationshipId: string,
-): Promise<ApiResponse<DailyReference>> {
-  return fetchJson<ApiResponse<DailyReference>>(
-    `/api/v1/leveraged-etf/relationships/${encodeURIComponent(relationshipId)}/reference`,
+): Promise<ApiResponse<DailyCloseAnchor>> {
+  return fetchJson<ApiResponse<DailyCloseAnchor>>(
+    `/api/v1/leveraged-etf/relationships/${encodeURIComponent(relationshipId)}/anchor`,
   );
 }
 
 export function calculateTarget(payload: {
   relationship_id: string;
-  reference_version_id: string;
+  anchor_version_id: string;
   input_side: "underlying" | "leveraged_product";
   target_price: string;
 }): Promise<ApiResponse<Calculation>> {
@@ -112,4 +112,3 @@ export function getProfitRatioHistory(
     `/api/v1/profit-ratio/instruments/${encodeURIComponent(instrumentId)}/history?${query}`,
   );
 }
-

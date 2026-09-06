@@ -18,12 +18,16 @@ class UnsupportedFeatureError(TraFriendDomainError):
     """The requested instrument does not support a feature."""
 
 
-class ReferenceVersionInactiveError(TraFriendDomainError):
-    """The requested reference is not the active reference for its relationship."""
-
-
 class ReferenceUnavailableError(TraFriendDomainError):
     """No reference set is eligible for an authoritative calculation."""
+
+
+class AnchorVersionInactiveError(TraFriendDomainError):
+    """The submitted Daily Close Anchor version is not active."""
+
+
+class AnchorUnavailableError(TraFriendDomainError):
+    """No complete current Daily Close Anchor is available."""
 
 
 class OvernightSessionError(TraFriendDomainError):

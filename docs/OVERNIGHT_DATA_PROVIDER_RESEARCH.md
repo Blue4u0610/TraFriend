@@ -1,5 +1,7 @@
 # U.S. Overnight Market-Data Provider Research
 
+> **Calculator boundary (2026-09-05):** This document preserves overnight market-data experiments and evidence. TraFriend's calculator now uses `DAILY_CLOSE_ANCHOR`, built from the same latest completed regular-session close for both instruments. Neither `OVERNIGHT_OPEN` nor `OVERNIGHT_SNAPSHOT` is a calculator reference method, and no conclusion here changes the calculator's anchor semantics.
+
 ## 1. Decision status
 
 - Researched: 2026-09-05
@@ -199,9 +201,9 @@ A follow-up credentialed full-session query resolved that question for the same 
 - A historical `feed=boats` quote query bounded to 20:04-20:06 ET returned `2241` valid two-sided SNDK quotes and no valid two-sided SNXX quote. The nearest SNDK quote to 20:05 was timestamped 20:05:00.016402 ET, with bid `1550.55`, ask `1553.85`, and midpoint `1552.20`; it was labeled `DELAYED` under the free-plan configuration.
 - Because SNXX had no valid quote in that window, a SNDK/SNXX timestamp difference could not be calculated and a synchronized quote-based reference was not feasible for this historical session.
 
-This negative result means the historical SNDK/SNXX evidence does not yet support adopting `OVERNIGHT_SNAPSHOT` as TraFriend's calculator reference method. It still supports a real live batch snapshot test: historical BOATS query availability is not equivalent to what the documented derived `overnight` latest-quote feed may return at 20:05.
+This negative result did not support adopting `OVERNIGHT_SNAPSHOT` as TraFriend's calculator reference method. A real live batch snapshot can still be tested as provider research because historical BOATS query availability is not equivalent to what the documented derived `overnight` latest-quote feed may return at 20:05; it is no longer a candidate calculator anchor under ADR 0002.
 
-The QQQ/TQQQ result also shows that independently selected first-trade opens are not inherently synchronized: a complete pair can represent market events two minutes apart. That timing mismatch can distort a leveraged relationship calculation during a moving market. It is evidence for evaluating a synchronized `OVERNIGHT_SNAPSHOT` as the eventual calculator default; it does not change the current `OVERNIGHT_OPEN` policy.
+The QQQ/TQQQ result also shows that independently selected first-trade opens are not inherently synchronized: a complete pair can represent market events two minutes apart. That timing mismatch can distort a leveraged relationship calculation during a moving market. It supports keeping first-trade opens out of the calculator; it does not change the preserved `OVERNIGHT_OPEN` diagnostic policy.
 
 Alpaca's documented historical quotes endpoint supports `feed=boats`, bounded `start`/`end` timestamps, and both single-symbol and batch queries. The credentialed result above confirms the endpoint works for SNDK but returned no valid SNXX bid/ask around 20:05 ET for this session. See Alpaca's [historical quotes endpoint](https://docs.alpaca.markets/us/reference/stockquotes-1) and [24/5 feed matrix](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api).
 

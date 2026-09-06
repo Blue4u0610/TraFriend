@@ -5,14 +5,15 @@ from decimal import Decimal
 from typing import Sequence
 
 from trafriend_api.application.ports.market_data import MarketDataProvider
+from trafriend_api.application.services.daily_close_anchor import DailyCloseAnchorService
 from trafriend_api.domain.calculator import calculate_theoretical_target
+from trafriend_api.domain.daily_close import DailyCloseAnchor, DailyCloseAnchorStatus
 from trafriend_api.domain.errors import (
-    ReferenceUnavailableError,
-    ReferenceVersionInactiveError,
+    AnchorUnavailableError,
+    AnchorVersionInactiveError,
 )
 from trafriend_api.domain.models import (
     CalculationResult,
-    DailyReferenceSet,
     Instrument,
     LeveragedRelationship,
     ProfitRatioHistory,
@@ -20,8 +21,13 @@ from trafriend_api.domain.models import (
 
 
 class MarketDataService:
-    def __init__(self, provider: MarketDataProvider) -> None:
+    def __init__(
+        self,
+        provider: MarketDataProvider,
+        anchor_service: DailyCloseAnchorService,
+    ) -> None:
         self._provider = provider
+        self._anchor_service = anchor_service
 
     @property
     def provider_code(self) -> str:
@@ -41,29 +47,30 @@ class MarketDataService:
     def get_relationship(self, relationship_id: str) -> LeveragedRelationship:
         return self._provider.get_relationship(relationship_id)
 
-    def get_reference(self, relationship_id: str) -> DailyReferenceSet:
-        return self._provider.get_reference(relationship_id)
+    def get_anchor(self, relationship_id: str) -> DailyCloseAnchor:
+        self._provider.get_relationship(relationship_id)
+        return self._anchor_service.latest(relationship_id)
 
     def calculate(
         self,
         relationship_id: str,
-        reference_version_id: str,
+        anchor_version_id: str,
         input_side: str,
         target_price: Decimal,
     ) -> CalculationResult:
         relationship = self._provider.get_relationship(relationship_id)
-        reference = self._provider.get_reference(relationship_id)
-        if reference.id != reference_version_id or reference.status != "active":
-            raise ReferenceVersionInactiveError(
-                "the submitted Daily Reference Price version is no longer active"
+        anchor = self._anchor_service.latest(relationship_id)
+        if anchor.id != anchor_version_id:
+            raise AnchorVersionInactiveError(
+                "the submitted Daily Close Anchor version is no longer active"
             )
-        if reference.freshness != "current":
-            raise ReferenceUnavailableError(
-                "the Daily Reference Price set is not current enough for calculation"
+        if anchor.status != DailyCloseAnchorStatus.COMPLETE:
+            raise AnchorUnavailableError(
+                "a complete same-date Daily Close Anchor is required"
             )
         return calculate_theoretical_target(
             relationship=relationship,
-            reference=reference,
+            anchor=anchor,
             input_side=input_side,
             target_price=target_price,
         )

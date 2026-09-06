@@ -2,7 +2,7 @@
 
 ## 1. Status and scope
 
-This is the proposed public HTTP contract for the MVP. It is intentionally framework-neutral at the contract level even though FastAPI will implement it. Examples are illustrative; the generated OpenAPI document becomes authoritative once implementation begins.
+This is the implemented Phase 1 HTTP contract for the MVP. It is intentionally framework-neutral at the contract level even though FastAPI implements it. Examples are illustrative; FastAPI's generated OpenAPI document is authoritative. The Daily Close Anchor correction is an intentional pre-public-release replacement of the earlier overnight-reference prototype contract.
 
 Public API base path:
 
@@ -10,9 +10,9 @@ Public API base path:
 /api/v1
 ```
 
-The API is read-oriented. Calculation `POST` requests are side-effect free and are not persisted as user history in the MVP. Reference capture and provider ingestion are worker responsibilities, not public endpoints. This phase exposes only a local manual CLI for overnight capture; it does not add an unauthenticated development or administration route.
+The API is read-oriented. Calculation `POST` requests are side-effect free and are not persisted as user history in the MVP. Daily-close capture and provider ingestion are backend responsibilities, not public endpoints. This phase exposes only local manual validation CLIs; it does not add an unauthenticated development or administration route.
 
-`OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` are distinct internal reference types. A future public reference representation will include `reference_type`, `source`, `source_feed`, `observed_at`, `market_timestamp`, `price_basis`, `quality`, and `status`. It may expose only an atomically complete active pair; partial attempts remain operational data.
+The calculator exposes `DAILY_CLOSE_ANCHOR` only. `OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` remain distinct internal diagnostic types and are not accepted by calculator routes.
 
 ## 2. Contract conventions
 
@@ -27,7 +27,7 @@ The API is read-oriented. Calculation `POST` requests are side-effect free and a
 - Market trading dates use ISO `YYYY-MM-DD` and are derived using the configured U.S. exchange calendar.
 - Prices, ratios, leverage factors, and returns are serialized as decimal strings, never JSON floating-point numbers.
 - Ratios and returns use fractional units: `"0.0588"` means `5.88%`.
-- Enums are lowercase strings.
+- Enum casing is defined by each schema; anchor status and quality enums are uppercase.
 
 ### 2.2 Success envelope
 
@@ -60,12 +60,12 @@ Errors follow Problem Details semantics and include a stable machine code:
 
 ```json
 {
-  "type": "https://trafriend.example/problems/reference-unavailable",
-  "title": "Daily Reference Price unavailable",
+  "type": "https://trafriend.example/problems/anchor-unavailable",
+  "title": "Daily Close Anchor unavailable",
   "status": 503,
-  "detail": "No complete reference price set is available for this relationship and trading date.",
+  "detail": "No complete same-date Daily Close Anchor is available for this relationship.",
   "instance": "/api/v1/leveraged-etf/calculations",
-  "code": "REFERENCE_UNAVAILABLE",
+  "code": "ANCHOR_UNAVAILABLE",
   "request_id": "req_01J...",
   "errors": []
 }
@@ -80,12 +80,12 @@ Initial error codes:
 | 400 | `INVALID_REQUEST` | JSON is malformed or parameters conflict |
 | 404 | `INSTRUMENT_NOT_FOUND` | Instrument ID does not exist |
 | 404 | `RELATIONSHIP_NOT_FOUND` | Relationship ID does not exist or is inactive for the requested context |
-| 409 | `REFERENCE_VERSION_INACTIVE` | UI submitted a reference version that has since been superseded |
+| 409 | `ANCHOR_VERSION_INACTIVE` | UI submitted an anchor version that has since been superseded |
 | 422 | `VALIDATION_ERROR` | One or more fields violate the schema |
 | 422 | `CALCULATION_OUT_OF_DOMAIN` | The theoretical model produces a non-positive price or violates a formula invariant |
 | 422 | `UNSUPPORTED_INTERVAL` | Requested analytics interval is unavailable |
 | 422 | `RANGE_TOO_LARGE` | Date range exceeds the limit for the selected interval |
-| 503 | `REFERENCE_UNAVAILABLE` | No complete current reference pair is published |
+| 503 | `ANCHOR_UNAVAILABLE` | No complete latest-session Daily Close Anchor is published |
 | 503 | `DATA_TEMPORARILY_UNAVAILABLE` | Required stored analytics data cannot currently be served |
 | 429 | `RATE_LIMITED` | Public request limit exceeded |
 
@@ -94,7 +94,7 @@ Provider-specific error messages and credentials must never appear in public err
 ### 2.4 HTTP and caching
 
 - GET endpoints support `ETag`/`If-None-Match` when practical.
-- Reference and latest-value responses use short cache lifetimes consistent with their displayed freshness.
+- Anchor and latest-value responses use cache lifetimes consistent with their displayed data date.
 - Historical finalized data may use longer immutable caching.
 - Calculation responses use `Cache-Control: no-store` by default.
 - Every response includes or echoes an `X-Request-ID`.
@@ -163,35 +163,50 @@ Provider-specific error messages and credentials must never appear in public err
 
 Inverse products use a negative factor such as `"-3"`.
 
-### 3.3 Daily reference set
+### 3.3 Daily Close Anchor
 
 ```json
 {
-  "id": "refv_01J...",
+  "id": "close_rel_nvda_nvdl_2x_2026-09-08_v1",
   "relationship_id": "rel_nvda_nvdl_2x",
   "trading_date": "2026-09-08",
-  "session": "us_overnight_open",
-  "status": "active",
+  "status": "COMPLETE",
   "version": 1,
   "underlying": {
-    "instrument_id": "ins_nvda_xnas",
     "symbol": "NVDA",
-    "price": "170.00000000",
-    "quoted_at": "2026-09-08T00:00:02Z"
+    "close": "170.00000000",
+    "trading_date": "2026-09-08",
+    "market_timestamp": "2026-09-08T04:00:00Z",
+    "observed_at": "2026-09-08T20:02:00Z",
+    "source": "mock",
+    "source_feed": "mock-regular-close",
+    "currency": "USD",
+    "quality": "REALTIME",
+    "status": "AVAILABLE",
+    "message": "accepted completed regular-session daily close"
   },
   "leveraged_product": {
-    "instrument_id": "ins_nvdl_xnas",
     "symbol": "NVDL",
-    "price": "80.00000000",
-    "quoted_at": "2026-09-08T00:00:04Z"
+    "close": "80.00000000",
+    "trading_date": "2026-09-08",
+    "market_timestamp": "2026-09-08T04:00:00Z",
+    "observed_at": "2026-09-08T20:02:00Z",
+    "source": "mock",
+    "source_feed": "mock-regular-close",
+    "currency": "USD",
+    "quality": "REALTIME",
+    "status": "AVAILABLE",
+    "message": "accepted completed regular-session daily close"
   },
-  "captured_at": "2026-09-08T00:00:05Z",
+  "session_closed_at": "2026-09-08T20:00:00Z",
+  "captured_at": "2026-09-08T20:02:00Z",
   "provider": "mock",
-  "freshness": "current"
+  "source_feed": "mock-regular-close",
+  "anchor_type": "DAILY_CLOSE_ANCHOR"
 }
 ```
 
-`provider` is a safe public label, not configuration or credentials. `freshness` is one of `current`, `stale`, or `unknown`. Calculator submission is enabled only for an `active` reference that passes application freshness policy.
+`provider` and `source_feed` are safe public provenance labels, not configuration or credentials. Calculator submission is enabled only for a `COMPLETE` anchor whose two members belong to the expected completed trading date. `PARTIAL` and `UNAVAILABLE` attempts cannot be calculated.
 
 ## 4. Instrument endpoints
 
@@ -304,8 +319,7 @@ Response `200`:
         "leverage_factor": "2",
         "objective_period": "daily",
         "effective_from": "2023-12-04",
-        "effective_to": null,
-        "reference_availability": "current"
+        "effective_to": null
       }
     ]
   },
@@ -315,25 +329,23 @@ Response `200`:
 }
 ```
 
-`reference_availability` is `current`, `stale`, or `unavailable` and allows the UI to communicate status before selecting a pair.
-
 ## 5. Leveraged ETF endpoints
 
-### 5.1 Get active Daily Reference Price set
+### 5.1 Get the latest Daily Close Anchor
 
 ```http
-GET /api/v1/leveraged-etf/relationships/{relationship_id}/reference
+GET /api/v1/leveraged-etf/relationships/{relationship_id}/anchor
 ```
 
 Optional query parameter:
 
 | Name | Type | Behavior |
 |---|---|---|
-| `trading_date` | date | Omit for the current exchange trading date. Historical access is reserved until explicitly enabled. |
+| `trading_date` | date | Not implemented. Historical caller-selected access is reserved until explicitly enabled. |
 
-Response `200`: success envelope containing the Daily reference set representation.
+Response `200`: success envelope containing the latest stored Daily Close Anchor representation.
 
-Response `503` with `REFERENCE_UNAVAILABLE` if no complete valid pair is active. The API must not silently substitute another trading date.
+Response `503` with `ANCHOR_UNAVAILABLE` if no anchor has been captured. A non-complete latest attempt is visible but cannot be submitted for calculation. The API must not silently substitute another trading date.
 
 ### 5.2 Calculate a theoretical target
 
@@ -346,7 +358,7 @@ Request:
 ```json
 {
   "relationship_id": "rel_nvda_nvdl_2x",
-  "reference_version_id": "refv_01J...",
+  "anchor_version_id": "close_rel_nvda_nvdl_2x_2026-09-08_v1",
   "input_side": "underlying",
   "target_price": "180.00"
 }
@@ -357,18 +369,18 @@ Fields:
 | Name | Type | Required | Rules |
 |---|---|---:|---|
 | `relationship_id` | string | yes | Must name an active daily-leverage relationship |
-| `reference_version_id` | string | yes | Must be the current active version for that relationship |
+| `anchor_version_id` | string | yes | Must be the current complete anchor version for that relationship |
 | `input_side` | enum | yes | `underlying` or `leveraged_product` |
 | `target_price` | decimal string | yes | Finite and greater than zero; maximum scale/size defined in OpenAPI |
 
-The client never sends reference prices or a leverage factor. The server loads them from the named immutable version and verifies that version is still active. This prevents a UI from displaying one reference and calculating with another after an operational correction.
+The client never sends close prices or a leverage factor. The server loads them from the named immutable anchor and verifies that version is still current and complete. This prevents a UI from displaying one anchor and calculating with another after an operational correction.
 
 Forward response `200`:
 
 ```json
 {
   "data": {
-    "formula_version": "leveraged-daily-linear/v1",
+    "formula_version": "leveraged-daily-close-linear/v2",
     "relationship_id": "rel_nvda_nvdl_2x",
     "leverage_factor": "2",
     "objective_period": "daily",
@@ -386,15 +398,16 @@ Forward response `200`:
     },
     "underlying_return": "0.0588235294117647",
     "leveraged_return": "0.1176470588235294",
-    "reference": {
-      "id": "refv_01J...",
+    "anchor": {
+      "id": "close_rel_nvda_nvdl_2x_2026-09-08_v1",
+      "anchor_type": "DAILY_CLOSE_ANCHOR",
       "trading_date": "2026-09-08",
-      "session": "us_overnight_open",
-      "underlying_price": "170.00000000",
-      "leveraged_product_price": "80.00000000",
-      "underlying_quoted_at": "2026-09-08T00:00:02Z",
-      "leveraged_product_quoted_at": "2026-09-08T00:00:04Z",
-      "provider": "mock"
+      "underlying_close": "170.00000000",
+      "leveraged_product_close": "80.00000000",
+      "underlying_market_timestamp": "2026-09-08T04:00:00Z",
+      "leveraged_product_market_timestamp": "2026-09-08T04:00:00Z",
+      "provider": "mock",
+      "source_feed": "mock-regular-close"
     },
     "calculated_at": "2026-09-08T14:30:00Z",
     "warnings": [
@@ -571,6 +584,7 @@ Detailed provider, database, job, and secret diagnostics must not be public.
 ## 8. Versioning and compatibility policy
 
 - Additive optional response fields are backward-compatible within `/api/v1`.
+- The `/reference` to `/anchor` correction occurred before a public production contract was released and is documented in ADR 0002; no compatibility alias remains to preserve the incorrect semantics.
 - Removing/renaming fields, changing decimal units, changing enum meaning, or changing formula behavior is breaking.
 - Formula changes receive a new `formula_version`; methodology changes receive a new methodology version even when the route remains stable.
 - Breaking HTTP changes use `/api/v2` or a documented, time-bounded migration.
@@ -582,9 +596,9 @@ The following are deliberately absent from the public API:
 
 - Provider credentials and raw provider error bodies.
 - Raw Futu/OpenD connections or SDK objects.
-- Capture triggers and manual reference activation.
+- Capture triggers and manual anchor activation.
 - Database IDs that expose sequential internals, if avoidable.
 - Arbitrary SQL/report endpoints.
-- User-supplied reference prices or leverage factors for authoritative results.
+- User-supplied anchor prices or leverage factors for authoritative results.
 
 Operational commands may be implemented as authenticated administrative tools or direct worker commands later, with their own threat model and audit trail.

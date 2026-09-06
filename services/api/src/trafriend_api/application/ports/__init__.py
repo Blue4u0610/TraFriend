@@ -10,3 +10,14 @@ __all__ = [
     "OvernightReferenceRepository",
     "TradingCalendar",
 ]
+from trafriend_api.application.ports.daily_close import (
+    CompletedSessionCalendar,
+    DailyCloseAnchorRepository,
+    DailyCloseMarketDataProvider,
+)
+
+__all__ = [
+    "CompletedSessionCalendar",
+    "DailyCloseAnchorRepository",
+    "DailyCloseMarketDataProvider",
+]

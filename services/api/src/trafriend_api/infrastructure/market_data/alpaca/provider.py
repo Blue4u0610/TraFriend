@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 import httpx
 
+from trafriend_api.application.ports.daily_close import DailyCloseMarketDataProvider
 from trafriend_api.application.ports.overnight_market_data import (
     HistoricalOvernightMarketDataProvider,
     OvernightMarketDataProvider,
 )
+from trafriend_api.domain.daily_close import DailyCloseBar, DailyCloseQuality
 from trafriend_api.domain.errors import (
     ProviderAuthenticationError,
     ProviderRateLimitError,
@@ -27,11 +30,14 @@ from trafriend_api.domain.overnight import (
 )
 
 UTC = timezone.utc
+EASTERN = ZoneInfo("America/New_York")
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.-]{1,16}$")
 
 
 class AlpacaMarketDataProvider(
-    OvernightMarketDataProvider, HistoricalOvernightMarketDataProvider
+    OvernightMarketDataProvider,
+    HistoricalOvernightMarketDataProvider,
+    DailyCloseMarketDataProvider,
 ):
     """Alpaca HTTP adapter for BOATS bars and overnight/BOATS quotes."""
 
@@ -44,6 +50,8 @@ class AlpacaMarketDataProvider(
         bars_feed: str = "boats",
         snapshot_quality: DataQuality = DataQuality.REALTIME,
         bars_quality: DataQuality = DataQuality.DELAYED,
+        daily_bars_feed: str = "sip",
+        daily_bars_quality: DailyCloseQuality = DailyCloseQuality.DELAYED,
         timeout_seconds: float = 10.0,
         client: Optional[httpx.Client] = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -58,10 +66,19 @@ class AlpacaMarketDataProvider(
             raise ValueError("snapshot quality must be REALTIME or DELAYED")
         if bars_quality not in {DataQuality.REALTIME, DataQuality.DELAYED}:
             raise ValueError("bars quality must be REALTIME or DELAYED")
+        if daily_bars_feed not in {"sip", "iex"}:
+            raise ValueError("daily_bars_feed must be sip or iex")
+        if daily_bars_quality not in {
+            DailyCloseQuality.REALTIME,
+            DailyCloseQuality.DELAYED,
+        }:
+            raise ValueError("daily bars quality must be REALTIME or DELAYED")
         self._snapshot_feed = snapshot_feed
         self._bars_feed = bars_feed
         self._snapshot_quality = snapshot_quality
         self._bars_quality = bars_quality
+        self._daily_bars_feed = daily_bars_feed
+        self._daily_bars_quality = daily_bars_quality
         self._now = now
         self._headers = {
             "APCA-API-KEY-ID": key_id,
@@ -81,6 +98,10 @@ class AlpacaMarketDataProvider(
         if self._snapshot_feed == self._bars_feed:
             return self._snapshot_feed
         return f"snapshot:{self._snapshot_feed};bars:{self._bars_feed}"
+
+    @property
+    def daily_close_feed(self) -> str:
+        return self._daily_bars_feed
 
     @property
     def capabilities(self) -> ProviderCapabilities:
@@ -176,8 +197,8 @@ class AlpacaMarketDataProvider(
             }
             if page_token:
                 params["page_token"] = page_token
-            observed_at = self._utc_now()
             payload = self._request_json("/v2/stocks/bars", params)
+            observed_at = self._utc_now()
             bars_payload = payload.get("bars")
             if not isinstance(bars_payload, Mapping):
                 raise ProviderUnavailableError("Alpaca returned a malformed bars response")
@@ -250,6 +271,57 @@ class AlpacaMarketDataProvider(
             sorted(quotes, key=lambda quote: (quote.market_timestamp, quote.symbol))
         )
 
+    def get_daily_close_bars(
+        self, symbols: Sequence[str], start: date, end: date
+    ) -> Sequence[DailyCloseBar]:
+        """Return normalized unadjusted daily bars for inclusive trading dates."""
+
+        normalized = self._normalize_symbols(symbols)
+        if start > end:
+            raise ValueError("daily bar start cannot follow end")
+        start_at = datetime.combine(start, time.min, tzinfo=EASTERN)
+        end_at = datetime.combine(end + timedelta(days=1), time.min, tzinfo=EASTERN)
+        bars = []
+        page_token = None
+        while True:
+            params = {
+                "symbols": ",".join(normalized),
+                "timeframe": "1Day",
+                "start": self._format_rfc3339(start_at),
+                "end": self._format_rfc3339(end_at),
+                "feed": self._daily_bars_feed,
+                "adjustment": "raw",
+                "sort": "asc",
+                "limit": "10000",
+            }
+            if page_token:
+                params["page_token"] = page_token
+            payload = self._request_json("/v2/stocks/bars", params)
+            observed_at = self._utc_now()
+            bars_payload = payload.get("bars")
+            if not isinstance(bars_payload, Mapping):
+                raise ProviderUnavailableError("Alpaca returned a malformed bars response")
+            for symbol in normalized:
+                raw_bars = bars_payload.get(symbol, ())
+                if not isinstance(raw_bars, list):
+                    continue
+                for raw_bar in raw_bars:
+                    if not isinstance(raw_bar, Mapping):
+                        continue
+                    parsed = self._parse_daily_close_bar(
+                        symbol, raw_bar, observed_at
+                    )
+                    if parsed is None:
+                        raise ProviderUnavailableError(
+                            "Alpaca returned malformed daily bar data"
+                        )
+                    if start <= parsed.trading_date <= end:
+                        bars.append(parsed)
+            page_token = payload.get("next_page_token")
+            if not isinstance(page_token, str) or not page_token:
+                break
+        return tuple(sorted(bars, key=lambda bar: (bar.trading_date, bar.symbol)))
+
     def _parse_quote(
         self, symbol: str, raw: Mapping[str, Any], observed_at: datetime
     ) -> Optional[OvernightQuote]:
@@ -320,6 +392,26 @@ class AlpacaMarketDataProvider(
             quality=self._bars_quality,
         )
 
+    def _parse_daily_close_bar(
+        self, symbol: str, raw: Mapping[str, Any], observed_at: datetime
+    ) -> Optional[DailyCloseBar]:
+        try:
+            close = Decimal(str(raw["c"]))
+            market_timestamp = self._parse_rfc3339(str(raw["t"]))
+            return DailyCloseBar(
+                symbol=symbol,
+                trading_date=market_timestamp.astimezone(EASTERN).date(),
+                close=close,
+                market_timestamp=market_timestamp,
+                observed_at=observed_at,
+                source=self.provider_code,
+                source_feed=self._daily_bars_feed,
+                currency="USD",
+                quality=self._daily_bars_quality,
+            )
+        except (KeyError, InvalidOperation, ValueError):
+            return None
+
     def _request_json(self, path: str, params: Mapping[str, Any]) -> Dict[str, Any]:
         try:
             response = self._client.get(path, params=params, headers=self._headers)
@@ -327,7 +419,7 @@ class AlpacaMarketDataProvider(
             raise ProviderUnavailableError("Alpaca market data request failed") from exc
         if response.status_code in {401, 403}:
             raise ProviderAuthenticationError(
-                "Alpaca credentials or overnight data entitlement are invalid"
+                "Alpaca credentials or market-data entitlement are invalid"
             )
         if response.status_code == 429:
             raise ProviderRateLimitError("Alpaca market data rate limit was reached")

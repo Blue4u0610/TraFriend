@@ -7,7 +7,7 @@ TraFriend should begin as a small, deployable system without baking vendor, fram
 - Correct and reproducible financial calculations.
 - Strict separation between the browser, backend, database, and market data providers.
 - Local and CI development without live market data.
-- Auditable Daily Reference Prices and provider provenance.
+- Auditable Daily Close Anchors and provider provenance.
 - Incremental addition of new financial tools.
 - A straightforward path from a modular monolith to separate services only if scale or ownership later requires it.
 
@@ -124,9 +124,9 @@ The application layer implements use cases and declares ports. It may depend on 
 
 - Search instruments.
 - Resolve an instrument and its underlying/leveraged relationships.
-- Get the active Daily Reference Price set.
+- Get the active Daily Close Anchor.
 - Calculate a leveraged or underlying theoretical target.
-- Capture and publish daily reference sets.
+- Capture and publish daily close anchors.
 - Get current and historical Profit Ratio data.
 
 Clock and trading-calendar behavior are injected ports so tests can control dates, daylight saving transitions, and holidays.
@@ -163,6 +163,16 @@ TradingCalendarPort
   session_for(timestamp) -> session/trading date
   capture_window(trading_date) -> time window
 
+CompletedSessionCalendar
+  latest_completed_session(timestamp) -> trading date and exchange close instant
+
+DailyCloseMarketDataProvider
+  get_daily_close_bars(symbols, start_date, end_date) -> normalized daily closes
+
+DailyCloseAnchorRepository
+  save(anchor) -> immutable version
+  latest(relationship_id) -> anchor
+
 OvernightMarketDataProvider
   get_latest_quotes(symbols) -> normalized quotes
   get_overnight_snapshot(symbols, target_timestamp) -> normalized quotes
@@ -193,47 +203,48 @@ Every market data adapter must:
 
 The Mock provider is a first-class adapter, not scattered test conditionals. It reads deterministic fixtures for normal, inverse, stale, missing, partial, holiday, boundary, delayed, provider-failure, missing-open, and out-of-sync scenarios. Local development and CI default to Mock and require no network or vendor account.
 
-The first real adapter uses Alpaca's hosted HTTP API. It deliberately uses the derived `overnight` latest-quote feed for a free-plan snapshot and the source-native `boats` feed for historical one-minute bars. Feed and quality are separate configuration: free BOATS bars are labeled `DELAYED`, never real-time. Switching to paid real-time BOATS changes backend configuration, not the service or frontend contract.
+The first real adapter uses Alpaca's hosted HTTP API. Daily close validation uses unadjusted `1Day` bars from the configured `sip` or `iex` feed and preserves explicit quality. Separately, overnight diagnostics use the derived `overnight` latest-quote feed and source-native `boats` history. Feed and quality are separate configuration; delayed data is never relabeled real-time.
 
 Provider feasibility, cost, operational tradeoffs, and data rights are tracked in `OVERNIGHT_DATA_PROVIDER_RESEARCH.md`. The Alpaca adapter is approved only for manual validation until the required public-display/redistribution rights are confirmed in writing.
 
-## 6. Daily Reference Price lifecycle
+## 6. Daily Close Anchor lifecycle
 
-### 6.1 Reference types
+### 6.1 Calculator anchor
 
-`OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` are different versioned reference types. They cannot be combined or substituted silently.
+`DAILY_CLOSE_ANCHOR` is the calculator's only reference method. It contains the regular-session closing prices of the underlying and leveraged ETF for one same, latest completed XNYS trading date. The calendar adapter determines that session from an aware current instant, including holidays and special closes; the service does not infer it from wall-clock hour or weekday logic.
 
-- Open capture queries a batch of one-minute bars from 20:00 ET through the configured search-window end and selects each symbol's first valid bar. The actual bar start is the market timestamp.
-- Snapshot capture makes one batch quote request near 20:05 ET, uses the documented bid/ask midpoint, rejects out-of-session or stale timestamps, and rejects values outside the configured cross-symbol skew.
-
-`America/New_York` defines boundaries. UTC instants are stored. The session begins on the calendar evening before its exchange trading date. The injected XNYS calendar determines weekends, holidays, and special closures.
+The provider returns normalized `DailyCloseBar` values. The application service accepts exactly one expected-date bar per symbol, validates positive Decimal closes, provider/feed provenance, usable quality, and non-future timestamps, then stores an immutable `COMPLETE`, `PARTIAL`, or `UNAVAILABLE` version. A prior-date response indicates provider lag and is rejected rather than used as fallback.
 
 ### 6.2 Capture workflow
 
 ```text
 Manual command now; scheduler later
-  -> resolve exchange session and intended trading date
+  -> resolve the latest completed exchange session
   -> create/idempotently resume capture run
   -> load active leveraged-product relationships
-  -> batch quote requests where the provider supports them
-  -> normalize and validate quotes
+  -> batch daily-bar requests where the provider supports them
+  -> normalize and validate same-date closes
   -> assemble each underlying/leveraged pair
   -> transactionally persist immutable pair version
   -> mark one complete version active
   -> emit metrics and invalidate affected caches
 ```
 
-Validation includes positive prices, expected currency, supported instrument status, provider timestamp, capture-window policy, and maximum timestamp skew within the pair. A pair is atomic: one valid quote and one missing quote is a failed pair, not a published reference.
+Validation includes positive prices, expected currency, supported instrument status, expected trading date, provider/feed provenance, market timestamp, and observation time. A pair is atomic: one valid close and one missing/rejected close is not calculator-eligible.
 
 A run can succeed for some relationships and fail for others. This limits blast radius. Failed relationships retry according to a bounded policy. Once a complete version is active, ordinary retries do not replace it. An operator correction creates a new immutable version with an explicit reason and activation audit record.
 
 ### 6.3 Read workflow
 
-A calculation loads the active relationship and active reference version for the current exchange trading date. It never asks the live provider for new prices. It then invokes the pure domain formula and returns the result with the exact reference version.
+A calculation loads the active relationship and latest stored complete Daily Close Anchor. It never asks the live provider for new prices. It then invokes the pure domain formula and returns the result with the exact anchor version.
 
-If today's version is unavailable or outside the allowed freshness policy, the application returns a typed data-availability error. It must not silently use yesterday's data. A future explicitly labeled historical calculator may allow the caller to choose an older trading date.
+If the expected completed-session version is unavailable, partial, stale, mixed-date, or lagging, the application returns a typed data-availability error. It must not silently substitute a prior session. A future explicitly labeled historical calculator may allow the caller to choose an older trading date.
 
-### 6.4 Scheduling
+### 6.4 Separate overnight diagnostics
+
+`OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` remain implemented behind `OvernightMarketDataProvider` and `HistoricalOvernightMarketDataProvider` for research and diagnostics. Their 20:00-04:00 ET session mapping, 20:00-20:15 opening window, 20:05 snapshot target, midpoint basis, and skew rules are unchanged. They are not calculator inputs and cannot be substituted for `DAILY_CLOSE_ANCHOR`.
+
+### 6.5 Scheduling
 
 The scheduler and worker will run outside the request-serving web process. Scheduling is intentionally not implemented in this phase. The manual command must prove feed semantics, timestamps, missing-symbol behavior, and licensing first. When added, a platform scheduler will invoke the same provider-neutral application use case.
 
@@ -244,7 +255,7 @@ Use a distributed/advisory lock plus database uniqueness for idempotency when mu
 The calculator is a pure transformation:
 
 ```text
-(reference pair, signed leverage factor, input side, target Decimal)
+(Daily Close Anchor, signed leverage factor, input side, target Decimal)
     -> calculation result or typed domain error
 ```
 
@@ -252,10 +263,10 @@ Use Python `Decimal`; never binary floating point for authoritative financial ca
 
 Important invariants:
 
-- Reference and target prices are finite and greater than zero.
+- Anchor and target prices are finite and greater than zero.
 - Leverage is finite, signed, and not zero.
-- The relationship connects the two reference instruments.
-- The calculation uses a single published reference version.
+- The relationship connects the two anchor instruments.
+- The calculation uses one complete same-date anchor version.
 - A theoretical result less than or equal to zero is outside the model domain.
 - Reverse results must also produce a positive underlying price.
 
@@ -297,7 +308,7 @@ Stable API error and warning codes are mapped to localized frontend messages. Ve
 - Public endpoints live under `/api/v1`.
 - GET responses may use short-lived HTTP/CDN caching and ETags where freshness semantics are clear.
 - Calculation POST requests are deterministic and side-effect free but should not be cached publicly by default because target inputs appear in the request.
-- Reference and analytics responses include `as_of`, `trading_date`, status, and provenance.
+- Anchor and analytics responses include timestamps, `trading_date`, status, and provenance.
 - Provider calls happen during ingestion, not on public read endpoints, except for a future explicitly designed live-data feature.
 - Redis is not required initially. Introduce it only for demonstrated cross-instance cache, rate-limit, or job-queue needs.
 
@@ -318,7 +329,7 @@ Trust boundaries are the browser/API boundary, API/database boundary, and backen
 
 ### 12.1 Backend
 
-- **Unit:** formulas, value objects, session mapping, reference selection, Profit Ratio invariants.
+- **Unit:** formulas, value objects, completed-session mapping, close-anchor selection, Profit Ratio invariants.
 - **Property/boundary:** forward/reverse equivalence within policy, signed leverage, extreme permitted decimals, non-positive output domains.
 - **Application:** use cases with fake clocks, repositories, calendars, and provider ports.
 - **Provider contract:** the same conformance suite runs against Mock and each real adapter; live vendor tests are opt-in and not required for ordinary CI.
@@ -336,11 +347,11 @@ No test in the default suite may require live market credentials or assume the m
 
 ## 13. Observability and operations
 
-Use structured logs with a request/run correlation ID. Important events include selected reference version, capture outcome, provider error class, and methodology version; do not log secrets or unnecessary full vendor payloads.
+Use structured logs with a request/run correlation ID. Important events include selected anchor version, capture outcome, provider error class, and methodology version; do not log secrets or unnecessary full vendor payloads.
 
 Initial metrics and alerts:
 
-- Valid active reference coverage by trading date.
+- Valid Daily Close Anchor coverage by trading date.
 - Capture completion latency from scheduled window.
 - Partial/failed pairs and retry exhaustion.
 - Provider latency, rate limiting, authentication failures, and stale quotes.
@@ -390,8 +401,8 @@ Cross-tool code belongs in shared modules only after there is a demonstrated sta
 
 | Risk | Consequence | Mitigation |
 |---|---|---|
-| Incorrect overnight trading-date/session mapping | A calculation uses the wrong day's anchor | Exchange calendar port, timezone-aware tests, configured capture windows, visible trading date |
-| Quotes captured too far apart or stale | Pair is not a coherent reference | Batch requests when possible, timestamp-skew/freshness validation, atomic pair publication |
+| Incorrect completed-session mapping | A calculation uses the wrong day's anchor | Exchange calendar port, before/after-close, weekend, holiday, and early-close tests |
+| Missing, mixed-date, or lagging daily bars | Pair is not a coherent anchor | Exact expected-date validation, explicit partial/unavailable states, no prior-session fallback |
 | Daily leverage model misunderstood as a forecast | User over-trusts output | Prominent single-day wording, return assumptions and references in every result, no multi-day UI |
 | Negative theoretical values at extreme moves | Nonsensical prices are displayed | Enforce model-domain errors and test boundaries |
 | Provider lock-in or vendor SDK leakage | Expensive replacement and brittle tests | Narrow ports, normalized DTOs, contract suite, infrastructure-only SDK imports |

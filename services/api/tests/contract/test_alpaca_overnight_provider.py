@@ -1,14 +1,16 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
 
+from trafriend_api.application.ports.daily_close import DailyCloseMarketDataProvider
 from trafriend_api.application.ports.overnight_market_data import (
     HistoricalOvernightMarketDataProvider,
     OvernightMarketDataProvider,
 )
+from trafriend_api.domain.daily_close import DailyCloseQuality
 from trafriend_api.domain.errors import ProviderUnavailableError
 from trafriend_api.domain.overnight import DataQuality
 from trafriend_api.infrastructure.market_data.alpaca import AlpacaMarketDataProvider
@@ -228,3 +230,47 @@ def test_alpaca_rejects_malformed_requested_quote() -> None:
 
     with pytest.raises(ProviderUnavailableError, match="malformed data"):
         provider.get_latest_quotes(("SNDK",))
+
+
+def test_alpaca_batches_unadjusted_sip_daily_close_bars() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "bars": {
+                    "SNDK": [{"c": 1740, "t": "2026-09-04T04:00:00Z"}],
+                    "SNXX": [{"c": 17.36, "t": "2026-09-04T04:00:00Z"}],
+                },
+                "next_page_token": None,
+            },
+        )
+
+    client = httpx.Client(
+        base_url="https://data.alpaca.markets", transport=httpx.MockTransport(handler)
+    )
+    provider = AlpacaMarketDataProvider(
+        "test-key",
+        "test-secret",
+        client=client,
+        now=lambda: datetime(2026, 9, 4, 21, tzinfo=UTC),
+    )
+
+    bars = provider.get_daily_close_bars(
+        ("SNDK", "SNXX"), date(2026, 9, 4), date(2026, 9, 4)
+    )
+
+    assert isinstance(provider, DailyCloseMarketDataProvider)
+    assert len(requests) == 1
+    query = parse_qs(requests[0].url.query.decode())
+    assert query["symbols"] == ["SNDK,SNXX"]
+    assert query["timeframe"] == ["1Day"]
+    assert query["feed"] == ["sip"]
+    assert query["adjustment"] == ["raw"]
+    assert query["start"] == ["2026-09-04T04:00:00Z"]
+    assert query["end"] == ["2026-09-05T04:00:00Z"]
+    assert [bar.close for bar in bars] == [Decimal("1740"), Decimal("17.36")]
+    assert all(bar.trading_date == date(2026, 9, 4) for bar in bars)
+    assert all(bar.quality == DailyCloseQuality.DELAYED for bar in bars)

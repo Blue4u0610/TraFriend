@@ -1,3 +1,4 @@
+from trafriend_api.domain.daily_close import DailyCloseQuality
 from trafriend_api.settings import Settings
 
 
@@ -31,3 +32,13 @@ def test_mock_remains_default_without_alpaca_credentials(monkeypatch) -> None:
     assert settings.overnight_provider == "mock"
     assert settings.alpaca_key_id is None
     assert settings.alpaca_secret_key is None
+
+
+def test_daily_close_feed_and_quality_are_backend_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("TRAFRIEND_ALPACA_DAILY_BARS_FEED", "iex")
+    monkeypatch.setenv("TRAFRIEND_ALPACA_DAILY_BARS_QUALITY", "REALTIME")
+
+    settings = Settings.from_environment()
+
+    assert settings.alpaca_daily_bars_feed == "iex"
+    assert settings.alpaca_daily_bars_quality == DailyCloseQuality.REALTIME

@@ -4,7 +4,7 @@
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and shadcn/ui.
 - Backend: Python 3.9+, FastAPI, Pydantic 2, Uvicorn, and pytest.
-- Data: deterministic in-memory Mock provider by default; optional Alpaca REST adapter for manual overnight validation.
+- Data: deterministic in-memory Mock provider by default; optional Alpaca REST adapter for manual daily-close and overnight validation.
 - Not included: Futu/OpenD implementation, PostgreSQL, public live-data serving, or automatic scheduling.
 
 The frontend and backend run as separate applications. Their dependencies and commands are intentionally independent.
@@ -45,9 +45,30 @@ Useful local URLs:
 - OpenAPI: `http://127.0.0.1:8000/openapi.json`
 - Interactive API docs: `http://127.0.0.1:8000/docs`
 
-The public API still uses the Mock provider and needs no market-data account or credential. The Alpaca adapter is reachable only through the manual backend command described below.
+The public API still uses the Mock provider and needs no market-data account or credential. The Alpaca adapter is reachable only through the manual backend commands described below.
 
-## Manual overnight reference capture
+## Manual Daily Close Anchor validation
+
+The calculator uses `DAILY_CLOSE_ANCHOR`, not an overnight open or snapshot. With backend-only Alpaca credentials in the current process, validate the latest completed regular-session close pairs from `services/api`:
+
+```bash
+.venv/bin/python -m trafriend_api.scripts.validate_daily_close_anchor
+```
+
+The command asks the XNYS calendar for the latest completed session, makes batched `1Day` requests with `feed=sip` and `adjustment=raw`, and validates SNDK/SNXX and QQQ/TQQQ on exactly that trading date. It also runs the requested deterministic scenarios: SNDK `+5%` maps to SNXX `+10%`, and QQQ `+2%` maps to TQQQ `+6%`. Output includes close, provider market timestamp, backend observation time, feed, quality, and status. It never prints credentials.
+
+Default environment overrides are:
+
+```bash
+export TRAFRIEND_ALPACA_DAILY_BARS_FEED=sip
+export TRAFRIEND_ALPACA_DAILY_BARS_QUALITY=DELAYED
+```
+
+The diagnostic writes only an in-memory immutable anchor version. It does not add PostgreSQL, a scheduler, an ingestion route, or frontend live data.
+
+## Separate manual overnight diagnostics
+
+The following commands preserve the earlier overnight research implementation. `OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` are not calculator anchors and are not used by calculation API requests.
 
 Run from `services/api`. Mock mode is deterministic and requires no credentials:
 
@@ -211,12 +232,12 @@ Phase 1 implements:
 - `GET /api/v1/instruments/search`
 - `GET /api/v1/instruments/{instrument_id}`
 - `GET /api/v1/instruments/{instrument_id}/leveraged-products`
-- `GET /api/v1/leveraged-etf/relationships/{relationship_id}/reference`
+- `GET /api/v1/leveraged-etf/relationships/{relationship_id}/anchor`
 - `POST /api/v1/leveraged-etf/calculations`
 - `GET /api/v1/profit-ratio/instruments/{instrument_id}/latest`
 - `GET /api/v1/profit-ratio/instruments/{instrument_id}/history`
 
-Mock reference prices and Profit Ratio points use fixed timestamps. They are deliberately not presented as live market data.
+Mock close anchors and Profit Ratio points are deterministic. They are deliberately not presented as live market data.
 
 ## Troubleshooting
 

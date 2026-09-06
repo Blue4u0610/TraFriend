@@ -1,705 +1,129 @@
 # TraFriend
 
-TraFriend 是一个面向美股投资者的轻量化金融分析工具，旨在把一些常用但分散、计算繁琐或不够直观的市场数据整理成简单易用的网页工具。
+TraFriend 是一个面向美股投资者的市场分析工具。当前产品聚焦于：
 
-目前 TraFriend 主要聚焦于两个方向：
+- 正股 / 普通 ETF 与杠杆 ETF 的单日理论价格换算
+- 当前及历史获利比（Profit Ratio）分析
 
-* **正股 / ETF 与杠杆 ETF 价格换算**
-* **获利比（Profit Ratio）历史分析**
-
-后续将持续加入更多实用的美股分析工具。
+TraFriend 仅用于信息、教育与研究，不提供投资建议、交易执行、券商服务或收益保证。
 
 ---
 
-# 中文
+## 中文
 
-## 主要功能
+### 杠杆 ETF 单日价格计算器
 
-### 1. 正股 / ETF 与杠杆 ETF 价格换算
+计算器根据一只正股或普通 ETF 与对应杠杆 ETF 的每日收益目标，进行双向理论换算。例如：
 
-TraFriend 可以根据每天获取的市场参考价格以及杠杆 ETF 的目标杠杆倍数，估算正股、普通 ETF 与对应杠杆 ETF 之间的理论价格关系。
+- SNDK ↔ SNXX（`+2x`）
+- NVDA ↔ NVDL（`+2x`）
+- TSLA ↔ TSLL（`+2x`）
+- QQQ ↔ QLD（`+2x`）、TQQQ（`+3x`）、SQQQ（`-3x`）
+- SOXX ↔ SOXL（`+3x`）、SOXS（`-3x`）
 
-例如：
+这些关系来自明确配置，不会根据 ticker 名称自动猜测。
 
-* NVDA ↔ NVDL
-* QQQ ↔ TQQQ
-* QQQ ↔ SQQQ
-* SOXX ↔ SOXL
-* TSLA ↔ TSLL
+### 每日收盘锚点
 
-用户可以：
+计算器使用 `DAILY_CLOSE_ANCHOR`：两只产品在最近一个已完成的美国常规交易时段、同一交易日的收盘价。
 
-* 输入正股或普通 ETF 的目标价格，估算对应杠杆 ETF 的理论价格
-* 输入杠杆 ETF 的目标价格，反推正股或普通 ETF 需要达到的价格
-* 输入目标涨跌幅进行换算
-* 查看正股与杠杆 ETF 对应的理论涨跌幅
-* 在同一标的存在多个杠杆 ETF 时进行切换和比较
-* 支持多头、反向以及不同杠杆倍数的 ETF
+例如，假设同一交易日的锚点是：
+
+```text
+NVDA 收盘价：$170.00
+NVDL 收盘价：$80.00
+```
+
+用户输入 NVDA 目标价 `$180.00` 时：
+
+```text
+NVDA 理论涨幅 = 180 / 170 - 1 ≈ 5.88%
+NVDL 理论涨幅 = 2 × 5.88% ≈ 11.76%
+NVDL 理论目标价 ≈ $89.41
+```
+
+反向计算使用相同锚点与相同的有符号杠杆倍数，从杠杆 ETF 目标价反推标的资产理论目标价。
+
+系统通过交易所日历判断“最近一个已完成交易时段”，包括收盘前后、周末、节假日和提前收盘日。只有两项数据都属于预期的同一交易日且有效时，才允许计算；不会静默使用前一交易日数据、缺失值或零值。
+
+### 为什么使用常规交易时段收盘价？
+
+大多数杠杆及反向 ETP 的目标是单日收益倍数，并每日重置风险敞口；FINRA 将该目标通常描述为从一个交易日收盘到下一交易日收盘。SNXX 的发行文件将单个交易日描述为从一次 NAV 计算到下一次 NAV 计算，并说明基金预计每日再平衡。
+
+因此，TraFriend 把最近一个已完成常规交易时段的收盘价作为计算锚点。这里“20:00 夜盘开盘不是重置点”是根据上述 NAV-to-NAV、close-to-close 与每日再平衡定义得出的结论；相关资料并未把 20:00 定义为重置时点。
+
+- [SNXX Summary Prospectus（SEC）](https://www.sec.gov/Archives/edgar/data/1587982/000121390026008044/ea0273211-04_497k.htm)
+- [FINRA：Leveraged and Inverse ETPs](https://www.finra.org/investors/insights/lowdown-leveraged-and-inverse-exchange-traded-products)
+
+### 如何理解结果
+
+计算公式是单日线性理论关系：
+
+```text
+标的收益率 = 标的目标价 / 标的收盘锚点 - 1
+杠杆收益率 = 有符号杠杆倍数 × 标的收益率
+杠杆 ETF 理论目标价 = 杠杆 ETF 收盘锚点 × (1 + 杠杆收益率)
+```
+
+这不是实际成交价保证，也不是多日预测。实际 ETF 价格可能因买卖价差、相对 NAV 的溢价或折价、跟踪误差、融资与费用、流动性、市场状况、分红及公司行为而不同。
+
+杠杆 ETF 每日重置，因此多日收益具有路径依赖和复利效应。不能把标的资产的多日累计收益率简单乘以杠杆倍数来预测 ETF 的多日收益。
+
+### 隔夜市场诊断
+
+TraFriend 保留 Alpaca BOATS 隔夜开盘、快照与历史数据诊断能力，用于研究数据覆盖、流动性和时间同步。这些诊断不属于计算器的 `DAILY_CLOSE_ANCHOR`，也不会改变计算公式的锚点。
+
+### 获利比
+
+TraFriend 计划展示当前与历史获利比，并配合价格序列观察变化。获利比取决于具体数据提供方和计算方法；在正式采用真实数据前，必须明确并展示 methodology、版本、时间、交易日与质量状态。系统不会猜测定义、填补缺失值或混合不兼容的方法版本。
 
 ---
 
-## 每日参考价格机制
+## English
 
-为了让每天的价格换算尽可能贴近实际市场情况，TraFriend 不会长期使用一组固定价格作为计算基础。
+### Single-day leveraged ETF calculator
 
-系统计划在：
+The calculator translates a theoretical single-day target in either direction between an underlying stock or ordinary ETF and a configured leveraged ETF. Supported relationships are curated metadata—not inferred from ticker names—and include SNDK/SNXX, NVDA/NVDL, TSLA/TSLL, QQQ/QLD/TQQQ/SQQQ, and SOXX/SOXL/SOXS with their signed daily leverage factors.
 
-> **每天美股夜盘开始时获取一次最新市场价格**
+### Daily Close Anchor
 
-并同时记录正股 / 普通 ETF 与对应杠杆 ETF 的价格，作为当天价格换算的 **每日参考价格（Daily Reference Price）**。
+The calculator uses `DAILY_CLOSE_ANCHOR`: the closing prices of both instruments from the same latest completed U.S. regular trading session.
 
-例如，当天系统记录：
+For example, with same-date closes of NVDA `$170.00` and NVDL `$80.00`, an NVDA target of `$180.00` represents a theoretical `5.88%` underlying move. At a `+2x` daily objective, the theoretical NVDL move is `11.76%`, producing a target near `$89.41`.
 
-```text
-NVDA 每日参考价：$170.00
-NVDL 每日参考价：$80.00
-```
+An exchange calendar determines the latest completed session across before/after-close times, weekends, holidays, and early closes. Calculation is enabled only for a valid pair on the exact expected trading date. Missing, mixed-date, lagging, stale, and zero values are never silently substituted.
 
-如果用户输入：
+### Why the regular-session close?
 
-```text
-NVDA 目标价格：$180.00
-```
+Most geared ETPs seek a daily return multiple and reset exposure each day. FINRA describes that daily objective as generally measured close-to-close. SNXX's issuer filing defines one trading day from one NAV calculation to the next and describes daily rebalancing.
 
-TraFriend 会首先计算 NVDA 相对于当天参考价格的变化：
+TraFriend therefore uses the completed regular-session close as its calculator anchor. The conclusion that 20:00 ET is not a reset boundary is an inference from those NAV-to-NAV, close-to-close, and daily-rebalancing definitions; the cited sources do not define an overnight opening as the reset.
 
-```text
-170 → 180
+- [SNXX Summary Prospectus (SEC)](https://www.sec.gov/Archives/edgar/data/1587982/000121390026008044/ea0273211-04_497k.htm)
+- [FINRA on leveraged and inverse ETPs](https://www.finra.org/investors/insights/lowdown-leveraged-and-inverse-exchange-traded-products)
 
-涨幅约 +5.88%
-```
-
-如果 NVDL 的目标日杠杆为 `+2x`，则理论涨幅约为：
+### Formula and limitations
 
 ```text
-+11.76%
+underlying_return = underlying_target / underlying_close_anchor - 1
+leveraged_return  = signed_leverage_factor × underlying_return
+leveraged_target  = leveraged_close_anchor × (1 + leveraged_return)
 ```
 
-从而得到：
+The reverse direction uses the same anchors and divides the leveraged return by the signed leverage factor.
 
-```text
-NVDL 理论价格 ≈ $89.41
-```
+This is a single-day theoretical estimate, not a guaranteed traded price or a multi-day forecast. Actual prices may differ because of bid/ask spreads, premium or discount to NAV, tracking error, financing and fees, liquidity, market conditions, distributions, and corporate actions.
 
-也就是说，TraFriend 的换算并不是根据正股与杠杆 ETF 的绝对价格比例进行计算，而是：
+Daily reset makes multi-day performance path-dependent. A leverage factor multiplied by the underlying's cumulative multi-day return is not a valid forecast; daily returns compound from changing bases.
 
-> **以每天重新获取的市场价格作为基准，根据标的价格变化幅度和 ETF 的目标日杠杆倍数进行估算。**
+### Overnight diagnostics
 
----
+TraFriend retains Alpaca BOATS overnight-open, snapshot, and historical diagnostic capabilities for data-coverage, liquidity, and synchronization research. They are separate from `DAILY_CLOSE_ANCHOR` and are not calculator inputs.
 
-## 为什么每天重新获取参考价格？
+### Profit Ratio
 
-杠杆 ETF 并不是简单地维持：
+TraFriend plans to show current and historical Profit Ratio observations alongside prices. Profit Ratio is provider- and methodology-dependent. A real implementation must display methodology/version, observation time, trading date, provenance, and quality; it must not guess definitions, fill gaps silently, or merge incompatible methodologies.
 
-```text
-ETF 价格 = 正股价格 × 杠杆倍数
-```
+## Disclaimer
 
-它们通常追踪的是标的资产的 **每日收益率倍数**。
-
-因此随着市场每天波动，正股与杠杆 ETF 之间的绝对价格关系也会不断发生变化。
-
-例如，即使 NVDA 后来再次回到某个历史价格，NVDL 也不一定回到之前对应的价格。
-
-原因可能包括：
-
-* 每日杠杆重置
-* 复利效应
-* 波动损耗
-* ETF 管理费用
-* 跟踪误差
-* 分红与公司行为
-* 不同交易时段的市场变化
-
-因此，TraFriend 会每天重新获取一组最新价格作为新的计算起点。
-
-这可以降低长期使用旧价格所产生的换算误差。
-
----
-
-## 如何理解换算结果？
-
-TraFriend 的杠杆 ETF 换算结果属于：
-
-> **基于当日参考价格的单日理论估算**
-
-而不是对未来 ETF 价格的预测。
-
-例如：
-
-```text
-今日参考价格
-
-NVDA    $170
-NVDL     $80
-```
-
-用户输入：
-
-```text
-NVDA → $180
-```
-
-得到：
-
-```text
-NVDL → ≈ $89.41
-```
-
-表示的是：
-
-> 如果从当前每日参考价格出发，NVDA 在相同的日度计算区间内上涨至 $180，并且 NVDL 大致实现其目标 `2x` 日收益，那么 NVDL 的理论价格约为 $89.41。
-
-如果跨越多个交易日，实际结果可能明显不同。
-
-因此换算结果应该理解为一个 **价格关系参考工具**，而不是长期价格预测模型。
-
----
-
-## 每日价格更新时间
-
-TraFriend 会显示当前使用的参考价格以及最近一次更新时间，例如：
-
-```text
-NVDA
-Reference Price
-$170.00
-
-NVDL
-Reference Price
-$80.00
-
-Updated
-Sep 5, 2026 · Overnight Session
-```
-
-这样用户可以清楚知道当前换算使用的是哪一天的市场基准价格。
-
-当新的交易日参考价格更新后，当天所有目标价格换算都会自动基于新的参考价格重新计算。
-
----
-
-# 2. 获利比分析
-
-TraFriend 计划提供美股的 **获利比（Profit Ratio）** 查询和历史趋势分析。
-
-获利比可以简单理解为：
-
-> 在当前股票价格下，估算处于盈利状态的筹码占全部筹码的比例。
-
-例如：
-
-```text
-NVDA
-
-当前获利比
-82.6%
-```
-
-相比单独查看某一天的获利比，TraFriend 更希望帮助用户观察：
-
-> **获利比是如何随时间变化的。**
-
----
-
-## 历史获利比
-
-TraFriend 计划记录并展示历史获利比数据，例如：
-
-```text
-日期            获利比
-
-Sep 1           65.2%
-Sep 2           71.8%
-Sep 3           68.4%
-Sep 4           77.1%
-Sep 5           82.6%
-```
-
-用户可以通过图表观察：
-
-* 当前获利比
-* 历史获利比走势
-* 不同时间周期的变化
-* 股价与获利比之间的关系
-* 市场筹码盈利状态的变化
-
----
-
-## 获利比图表
-
-TraFriend 计划提供多种方式展示获利比，包括：
-
-* 历史趋势图
-* 股价与获利比组合图
-* 不同时间范围切换
-* OHLC / K 线形式的获利比展示
-
-例如：
-
-```text
-Stock Price
-──────────────────────────
-
-          ╭─────╮
-     ╭────╯     ╰───
-─────╯
-
-Profit Ratio
-──────────────────────────
-
-       ╭────╮       ╭────
-───────╯    ╰───────╯
-```
-
-这样用户不仅能看到：
-
-```text
-当前获利比 = 82.6%
-```
-
-还能够判断：
-
-```text
-过去一段时间获利比是在持续上升，
-还是从高位快速下降。
-```
-
----
-
-# TraFriend 想解决什么问题？
-
-很多美股分析中经常出现这样的实际问题：
-
-```text
-“NVDA 涨到 $200，NVDL 大概是多少？”
-
-“TQQQ 到 $100，QQQ 大概需要到多少？”
-
-“今天这个换算应该以什么价格为基准？”
-
-“NVDA 现在有多少筹码处于盈利状态？”
-
-“过去几个月获利比是怎么变化的？”
-```
-
-这些问题本身并不一定复杂，但相关数据和工具往往分散在不同的平台里。
-
-TraFriend 希望把它们变成更加简单的流程：
-
-> **搜索标的 → 输入目标 → 直接获得结果**
-
-以及：
-
-> **搜索股票 → 查看指标 → 观察历史变化**
-
-减少重复计算以及在多个金融平台之间切换的成本。
-
----
-
-# 未来计划
-
-TraFriend 并不会只做两个工具。
-
-未来计划逐步加入更多美股分析功能，例如：
-
-* 更多正股与杠杆 ETF 对应关系
-* 多个杠杆 ETF 同时比较
-* 历史获利比
-* 筹码分布分析
-* 资金流分析
-* 波动率工具
-* 仓位计算
-* 风险收益计算
-* 做空数据
-* 更多市场指标
-* 历史回测工具
-
-TraFriend 希望最终发展成为一个：
-
-> **简单、直观、实用的美股分析工具箱。**
-
----
-
-# 项目状态
-
-TraFriend 目前仍处于早期开发阶段。
-
-当前开发顺序主要为：
-
-```text
-杠杆 ETF 价格换算
-        ↓
-每日市场参考价格
-        ↓
-更多正股 / ETF 映射
-        ↓
-获利比查询
-        ↓
-历史获利比
-        ↓
-更多市场分析工具
-```
-
-功能、数据来源、计算方式以及用户界面仍会持续优化。
-
----
-
-# 风险提示
-
-TraFriend 提供的所有数据、计算结果和分析工具仅用于信息展示、学习和研究用途。
-
-杠杆 ETF 的目标价格属于基于每日参考价格及目标日杠杆倍数计算出的 **理论估算值**，不代表未来实际成交价格。
-
-实际市场表现可能受到以下因素影响：
-
-* 市场波动
-* 每日杠杆重置
-* 复利效应
-* 波动损耗
-* ETF 费用
-* 跟踪误差
-* 流动性
-* 买卖价差
-* 公司行为
-* 市场交易时段差异
-
-TraFriend 不提供投资建议，也不保证任何数据、计算结果或分析结果的完整性、实时性或准确性。
-
-任何投资决策均应由用户自行判断，并自行承担相应风险。
-
----
-
-# English
-
-TraFriend is a lightweight financial analytics platform designed for U.S. stock market investors.
-
-It aims to turn commonly used but scattered market calculations and indicators into simple and intuitive web-based tools.
-
-TraFriend currently focuses on:
-
-* **Underlying / Leveraged ETF Price Estimation**
-* **Profit Ratio Analytics**
-
-More market tools will be added over time.
-
----
-
-# Features
-
-## 1. Leveraged ETF Price Calculator
-
-TraFriend estimates the theoretical price relationship between an underlying stock or ETF and its associated leveraged ETFs.
-
-Examples include:
-
-* NVDA ↔ NVDL
-* QQQ ↔ TQQQ
-* QQQ ↔ SQQQ
-* SOXX ↔ SOXL
-* TSLA ↔ TSLL
-
-Users can:
-
-* Enter an underlying target price and estimate the corresponding leveraged ETF price
-* Enter a leveraged ETF target price and reverse-calculate the required underlying price
-* Enter a target percentage move
-* Compare theoretical percentage changes
-* Switch between multiple leveraged products associated with the same underlying
-* Work with long, inverse, and different leverage ratios
-
----
-
-## Daily Reference Prices
-
-To keep price estimates as closely aligned with current market conditions as possible, TraFriend does not rely on a permanently fixed pair of reference prices.
-
-The system is designed to:
-
-> **Capture the latest market prices once at the beginning of each U.S. overnight trading session.**
-
-The prices of both the underlying asset and its leveraged ETF are recorded as the **Daily Reference Prices** used for that day's calculations.
-
-For example:
-
-```text
-NVDA Daily Reference Price: $170.00
-NVDL Daily Reference Price: $80.00
-```
-
-If the user enters:
-
-```text
-NVDA Target Price: $180.00
-```
-
-the underlying move is approximately:
-
-```text
-$170 → $180
-
-+5.88%
-```
-
-For a `+2x` leveraged ETF, the theoretical daily move would be approximately:
-
-```text
-+11.76%
-```
-
-resulting in an estimated price of:
-
-```text
-NVDL ≈ $89.41
-```
-
-TraFriend therefore does not calculate leveraged ETF prices using a fixed absolute price ratio.
-
-Instead, it uses:
-
-> **A daily market reference point combined with the underlying percentage move and the ETF's target daily leverage.**
-
----
-
-## Why are reference prices refreshed every day?
-
-Leveraged ETFs generally target a multiple of the **daily return** of their underlying assets.
-
-They do not maintain a permanent relationship such as:
-
-```text
-ETF Price = Underlying Price × Leverage
-```
-
-As markets move from day to day, the absolute relationship between an underlying asset and its leveraged ETF changes.
-
-This can be affected by:
-
-* Daily leverage resets
-* Compounding
-* Volatility drag
-* Fund expenses
-* Tracking differences
-* Dividends and corporate actions
-* Changes across trading sessions
-
-For this reason, TraFriend refreshes its reference prices each trading day rather than continuing to calculate from old reference prices.
-
-This helps reduce the error that could accumulate when outdated price anchors are used.
-
----
-
-## Understanding the Estimate
-
-TraFriend's leveraged ETF calculator should be interpreted as:
-
-> **A single-day theoretical estimate based on the current daily reference prices.**
-
-For example:
-
-```text
-Reference Prices
-
-NVDA    $170
-NVDL     $80
-```
-
-If the user enters:
-
-```text
-NVDA → $180
-```
-
-TraFriend may estimate:
-
-```text
-NVDL → ≈ $89.41
-```
-
-This means that if NVDA moves from the current daily reference price to $180 within the relevant daily calculation period, and NVDL approximately achieves its targeted `2x` daily exposure, its theoretical price would be around $89.41.
-
-This should not be interpreted as a multi-day price prediction.
-
-Actual results across multiple trading days can differ significantly because leveraged ETFs reset their exposure daily.
-
----
-
-## Reference Price Timestamp
-
-TraFriend will display the reference prices currently being used together with their most recent update time.
-
-For example:
-
-```text
-NVDA
-Reference Price
-$170.00
-
-NVDL
-Reference Price
-$80.00
-
-Updated
-Sep 5, 2026 · Overnight Session
-```
-
-When a new trading day's reference prices are captured, calculations will automatically use the new reference values.
-
----
-
-# 2. Profit Ratio Analytics
-
-TraFriend plans to provide **Profit Ratio** data and historical trend analysis for U.S. stocks.
-
-Profit Ratio can be understood as:
-
-> The estimated percentage of market holdings that are currently profitable at the current stock price.
-
-Example:
-
-```text
-NVDA
-
-Current Profit Ratio
-82.6%
-```
-
-Rather than only showing the latest number, TraFriend aims to help users understand how Profit Ratio changes over time.
-
----
-
-## Historical Profit Ratio
-
-TraFriend plans to provide historical Profit Ratio data such as:
-
-```text
-Date             Profit Ratio
-
-Sep 1            65.2%
-Sep 2            71.8%
-Sep 3            68.4%
-Sep 4            77.1%
-Sep 5            82.6%
-```
-
-This can help users explore:
-
-* Current Profit Ratio
-* Historical Profit Ratio trends
-* Changes across different periods
-* Relationships between stock prices and Profit Ratio
-* Changes in the profitability of market holdings
-
----
-
-## Profit Ratio Charts
-
-Planned visualizations include:
-
-* Historical trend charts
-* Combined stock-price and Profit-Ratio views
-* Multiple selectable time ranges
-* OHLC / candlestick-style Profit Ratio charts
-
-The goal is to make it easier to understand not only the current Profit Ratio, but also how quickly and in what direction it has been changing.
-
----
-
-# What is TraFriend trying to solve?
-
-U.S. stock investors frequently encounter questions such as:
-
-```text
-“If NVDA reaches $200, what could NVDL be worth?”
-
-“If TQQQ reaches $100, where might QQQ need to trade?”
-
-“What reference prices should today's calculation use?”
-
-“What percentage of NVDA holdings are currently profitable?”
-
-“How has the Profit Ratio changed over the past several months?”
-```
-
-The calculations may not always be complicated, but the necessary information is often scattered across multiple platforms.
-
-TraFriend aims to simplify these workflows into:
-
-> **Search → Enter a target → Get the result**
-
-and:
-
-> **Search → View an indicator → Explore its history**
-
----
-
-# Future Plans
-
-TraFriend is intended to grow beyond its initial two tools.
-
-Future features may include:
-
-* More leveraged ETF mappings
-* Multi-ETF comparison
-* Historical Profit Ratio data
-* Cost-distribution analytics
-* Capital-flow indicators
-* Volatility tools
-* Position sizing
-* Risk/reward calculators
-* Short-interest analytics
-* Additional market indicators
-* Backtesting tools
-
-The long-term goal is to build TraFriend into:
-
-> **A simple, intuitive, and practical toolkit for U.S. stock market analysis.**
-
----
-
-# Project Status
-
-TraFriend is currently in early development.
-
-The current roadmap is:
-
-```text
-Leveraged ETF Calculator
-        ↓
-Daily Market Reference Prices
-        ↓
-More Underlying / ETF Mappings
-        ↓
-Profit Ratio
-        ↓
-Historical Profit Ratio
-        ↓
-More Market Tools
-```
-
-Features, data sources, calculations, and the overall user experience will continue to evolve.
-
----
-
-# Disclaimer
-
-TraFriend is intended for informational, analytical, educational, and research purposes only.
-
-Leveraged ETF target prices are **theoretical estimates** calculated using daily reference prices and target daily leverage. They do not represent guaranteed future market prices.
-
-Actual market performance may differ due to factors including:
-
-* Market volatility
-* Daily leverage resets
-* Compounding
-* Volatility drag
-* Fund expenses
-* Tracking differences
-* Liquidity
-* Bid-ask spreads
-* Corporate actions
-* Differences between trading sessions
-
-TraFriend does not provide investment advice and does not guarantee the completeness, timeliness, or accuracy of any data, calculation, or analysis.
-
-Users are solely responsible for their own investment decisions and associated risks.
+TraFriend is for informational, analytical, educational, and research purposes only. It does not provide investment advice, brokerage services, trade execution, or guarantees about data, calculations, or market outcomes.

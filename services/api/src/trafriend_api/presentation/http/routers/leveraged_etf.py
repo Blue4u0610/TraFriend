@@ -9,14 +9,14 @@ from trafriend_api.presentation.http.dependencies import (
     response_meta,
 )
 from trafriend_api.presentation.http.schemas import (
+    CalculationAnchorSchema,
     CalculationData,
     CalculationInputSchema,
     CalculationOutputSchema,
-    CalculationReferenceSchema,
     CalculationRequest,
     CalculationResponse,
-    DailyReferenceResponse,
-    DailyReferenceSetSchema,
+    DailyCloseAnchorResponse,
+    DailyCloseAnchorSchema,
     WarningSchema,
 )
 
@@ -24,17 +24,17 @@ router = APIRouter(prefix="/api/v1/leveraged-etf", tags=["leveraged-etf"])
 
 
 @router.get(
-    "/relationships/{relationship_id}/reference",
-    response_model=DailyReferenceResponse,
+    "/relationships/{relationship_id}/anchor",
+    response_model=DailyCloseAnchorResponse,
 )
-def get_reference(
+def get_anchor(
     relationship_id: str,
     request: Request,
     service: MarketDataService = Depends(get_market_data_service),
-) -> DailyReferenceResponse:
-    reference = service.get_reference(relationship_id)
-    return DailyReferenceResponse(
-        data=DailyReferenceSetSchema.model_validate(reference),
+) -> DailyCloseAnchorResponse:
+    anchor = service.get_anchor(relationship_id)
+    return DailyCloseAnchorResponse(
+        data=DailyCloseAnchorSchema.model_validate(anchor),
         meta=response_meta(request),
     )
 
@@ -46,13 +46,17 @@ def calculate(
     service: MarketDataService = Depends(get_market_data_service),
 ) -> CalculationResponse:
     relationship = service.get_relationship(payload.relationship_id)
-    reference = service.get_reference(payload.relationship_id)
+    anchor = service.get_anchor(payload.relationship_id)
     result = service.calculate(
         relationship_id=payload.relationship_id,
-        reference_version_id=payload.reference_version_id,
+        anchor_version_id=payload.anchor_version_id,
         input_side=payload.input_side,
         target_price=payload.target_price,
     )
+    assert anchor.underlying.close is not None
+    assert anchor.leveraged_product.close is not None
+    assert anchor.underlying.market_timestamp is not None
+    assert anchor.leveraged_product.market_timestamp is not None
 
     if result.input_side == "underlying":
         input_instrument = relationship.underlying
@@ -85,15 +89,18 @@ def calculate(
             ),
             underlying_return=result.underlying_return,
             leveraged_return=result.leveraged_return,
-            reference=CalculationReferenceSchema(
-                id=reference.id,
-                trading_date=reference.trading_date,
-                session=reference.session,
-                underlying_price=reference.underlying.price,
-                leveraged_product_price=reference.leveraged_product.price,
-                underlying_quoted_at=reference.underlying.quoted_at,
-                leveraged_product_quoted_at=reference.leveraged_product.quoted_at,
-                provider=reference.provider,
+            anchor=CalculationAnchorSchema(
+                id=anchor.id,
+                anchor_type="DAILY_CLOSE_ANCHOR",
+                trading_date=anchor.trading_date,
+                underlying_close=anchor.underlying.close,
+                leveraged_product_close=anchor.leveraged_product.close,
+                underlying_market_timestamp=anchor.underlying.market_timestamp,
+                leveraged_product_market_timestamp=(
+                    anchor.leveraged_product.market_timestamp
+                ),
+                provider=anchor.provider,
+                source_feed=anchor.source_feed,
             ),
             calculated_at=datetime.now(timezone.utc),
             warnings=[
@@ -101,9 +108,18 @@ def calculate(
                     code="THEORETICAL_SINGLE_DAY_ONLY",
                     message=(
                         "This estimate uses a single-day linear leverage relationship "
-                        "and is not a multi-day price forecast."
+                        "anchored to the latest completed regular-session closes. "
+                        "Daily-reset compounding means it is not a multi-day forecast."
                     ),
-                )
+                ),
+                WarningSchema(
+                    code="ACTUAL_MARKET_PRICE_MAY_DIFFER",
+                    message=(
+                        "Actual ETF prices may differ because of bid/ask spreads, "
+                        "premium or discount to NAV, tracking error, financing and "
+                        "fees, liquidity, and market conditions."
+                    ),
+                ),
             ],
         ),
         meta=response_meta(request),

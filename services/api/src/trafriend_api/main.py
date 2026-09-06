@@ -8,10 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from trafriend_api.domain.errors import (
+    AnchorUnavailableError,
+    AnchorVersionInactiveError,
     CalculationOutOfDomainError,
     FinancialInputError,
-    ReferenceUnavailableError,
-    ReferenceVersionInactiveError,
     ResourceNotFoundError,
     UnsupportedFeatureError,
 )
@@ -86,27 +86,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             str(exc),
         )
 
-    @app.exception_handler(ReferenceVersionInactiveError)
-    async def inactive_reference_handler(
-        request: Request, exc: ReferenceVersionInactiveError
+    @app.exception_handler(AnchorVersionInactiveError)
+    async def inactive_anchor_handler(
+        request: Request, exc: AnchorVersionInactiveError
     ) -> JSONResponse:
         return problem(
             request,
             409,
-            "REFERENCE_VERSION_INACTIVE",
-            "Daily Reference Price changed",
+            "ANCHOR_VERSION_INACTIVE",
+            "Daily Close Anchor changed",
             str(exc),
         )
 
-    @app.exception_handler(ReferenceUnavailableError)
-    async def unavailable_reference_handler(
-        request: Request, exc: ReferenceUnavailableError
+    @app.exception_handler(AnchorUnavailableError)
+    async def unavailable_anchor_handler(
+        request: Request, exc: AnchorUnavailableError
     ) -> JSONResponse:
         return problem(
             request,
             503,
-            "REFERENCE_UNAVAILABLE",
-            "Daily Reference Price unavailable",
+            "ANCHOR_UNAVAILABLE",
+            "Daily Close Anchor unavailable",
             str(exc),
         )
 

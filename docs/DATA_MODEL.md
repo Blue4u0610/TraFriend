@@ -8,7 +8,7 @@ The model prioritizes:
 
 - Stable instrument identity independent of ticker text or provider.
 - Effective-dated leveraged ETF relationships.
-- Immutable and reproducible Daily Reference Price versions.
+- Immutable and reproducible Daily Close Anchor versions.
 - Explicit provider and methodology provenance.
 - Timezone-safe market data.
 - Room for additional analytics modules without a universal catch-all table.
@@ -36,13 +36,10 @@ erDiagram
     INSTRUMENTS ||--o{ INSTRUMENT_PROVIDER_MAPPINGS : maps_to
     INSTRUMENTS ||--o{ LEVERAGED_PRODUCT_RELATIONSHIPS : is_underlying
     INSTRUMENTS ||--o{ LEVERAGED_PRODUCT_RELATIONSHIPS : is_leveraged_product
-    REFERENCE_CAPTURE_RUNS ||--o{ REFERENCE_CAPTURE_ATTEMPTS : contains
-    LEVERAGED_PRODUCT_RELATIONSHIPS ||--o{ REFERENCE_CAPTURE_ATTEMPTS : attempted_for
-    REFERENCE_CAPTURE_RUNS ||--o{ DAILY_REFERENCE_SETS : creates
-    LEVERAGED_PRODUCT_RELATIONSHIPS ||--o{ DAILY_REFERENCE_SETS : anchors
-    DAILY_REFERENCE_SETS ||--|{ DAILY_REFERENCE_PRICES : contains
-    INSTRUMENTS ||--o{ DAILY_REFERENCE_PRICES : priced
-    DAILY_REFERENCE_SETS ||--o{ REFERENCE_ACTIVATION_EVENTS : transitions
+    LEVERAGED_PRODUCT_RELATIONSHIPS ||--o{ DAILY_CLOSE_ANCHORS : anchors
+    DAILY_CLOSE_ANCHORS ||--|{ DAILY_CLOSE_ANCHOR_VALUES : contains
+    INSTRUMENTS ||--o{ DAILY_CLOSE_ANCHOR_VALUES : priced
+    OVERNIGHT_DIAGNOSTIC_RUNS ||--o{ OVERNIGHT_DIAGNOSTIC_VALUES : contains
     PROFIT_RATIO_METHODOLOGIES ||--o{ PROFIT_RATIO_OBSERVATIONS : defines
     INSTRUMENTS ||--o{ PROFIT_RATIO_OBSERVATIONS : measured_for
     INSTRUMENTS ||--o{ MARKET_PRICE_BARS : priced_in
@@ -127,9 +124,73 @@ Constraints:
 
 The relationship is effective-dated because funds can change objectives, factors, or underlyings. Never edit historical leverage facts in place.
 
-## 5. Daily Reference Price model
+## 5. Daily Close Anchor model
 
-### 5.1 `reference_capture_runs`
+These tables are design targets only; PostgreSQL is not implemented in the current round. The in-process implementation uses immutable domain values and an in-memory repository with the same essential semantics.
+
+### 5.1 `daily_close_anchors`
+
+One immutable calculator-anchor attempt for a relationship and expected completed exchange session.
+
+| Column | Type | Rules / meaning |
+|---|---|---|
+| `id` | uuid | Primary key; exposed as an opaque anchor version ID |
+| `relationship_id` | uuid | FK to `leveraged_product_relationships` |
+| `trading_date` | date | Expected latest completed XNYS session |
+| `session_closed_at` | timestamptz | Actual exchange-calendar close instant |
+| `version` | integer | Positive immutable sequence for the relationship |
+| `status` | text | `COMPLETE`, `PARTIAL`, or `UNAVAILABLE` |
+| `provider_code` | text | Safe provider label |
+| `source_feed` | text | Safe feed label |
+| `anchor_type` | text | Always `DAILY_CLOSE_ANCHOR` |
+| `captured_at` | timestamptz | Pair validation/persistence instant |
+| `correction_reason` | text nullable | Required if a newer version replaces a usable one |
+| `created_at` | timestamptz | Audit timestamp |
+
+Constraints:
+
+- Unique `(relationship_id, trading_date, version)` and `version > 0`.
+- An anchor is append-only; corrections create a higher version.
+- Only `COMPLETE` can be selected by the calculator.
+- `session_closed_at <= captured_at`.
+- The trading date is resolved by the exchange calendar, never database `CURRENT_DATE`.
+
+### 5.2 `daily_close_anchor_values`
+
+Exactly two role slots per anchor, including explicit missing or rejected outcomes.
+
+| Column | Type | Rules / meaning |
+|---|---|---|
+| `id` | uuid | Primary key |
+| `anchor_id` | uuid | FK to `daily_close_anchors` |
+| `role` | text | `underlying` or `leveraged_product` |
+| `instrument_id` | uuid | FK to `instruments` |
+| `symbol_at_capture` | text | Auditable display symbol |
+| `close` | numeric(20,8) nullable | Finite and positive when present |
+| `trading_date` | date nullable | Provider bar date |
+| `market_timestamp` | timestamptz nullable | Provider daily-bar timestamp |
+| `observed_at` | timestamptz | Backend observation instant |
+| `source` | text | Safe provider label |
+| `source_feed` | text | Safe feed label |
+| `currency` | char(3) | `USD` for the current U.S. universe |
+| `quality` | text | `REALTIME`, `DELAYED`, `STALE`, or `UNAVAILABLE` |
+| `status` | text | `AVAILABLE`, `REJECTED`, or `MISSING` |
+| `message` | text | Bounded sanitized selection/rejection reason |
+| `created_at` | timestamptz | Audit timestamp |
+
+Constraints:
+
+- Unique `(anchor_id, role)` and `(anchor_id, instrument_id)`.
+- An `AVAILABLE` value has non-null positive close, date, and market timestamp.
+- A `MISSING` value has null close/date/market timestamp and `UNAVAILABLE` quality.
+- A `COMPLETE` parent has exactly two `AVAILABLE` values whose date equals the parent's expected trading date and whose provider/feed matches the parent.
+- A prior-session bar is retained only as a `REJECTED` diagnostic value. It cannot form a fallback anchor.
+
+### 5.3 Separate overnight diagnostic model
+
+The following earlier design records `OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` experiments. These entities are **not calculator anchors** and must not be queried by the calculator repository. Their production persistence remains unimplemented.
+
+#### 5.3.1 `reference_capture_runs`
 
 One scheduled or manually authorized attempt window for a session/trading date/provider.
 
@@ -157,7 +218,7 @@ Constraints and indexes:
 
 A run can be `partial` even when some individual reference pairs are valid and active.
 
-### 5.2 `reference_capture_attempts`
+#### 5.3.2 `reference_capture_attempts`
 
 Operational outcome for each relationship considered by a capture run. This stores failures without creating an invalid published reference set.
 
@@ -179,7 +240,7 @@ Operational outcome for each relationship considered by a capture run. This stor
 
 Unique `(capture_run_id, relationship_id, attempt_number)`.
 
-### 5.3 `daily_reference_sets`
+#### 5.3.3 `daily_reference_sets`
 
 Immutable version metadata for a complete underlying/leveraged ETF pair.
 
@@ -209,7 +270,7 @@ Constraints:
 
 Ordinary retries create a set only for a previously failed pair. An operator correction creates a higher immutable version and records why it superseded the prior version.
 
-### 5.4 `daily_reference_prices`
+#### 5.3.4 `daily_reference_prices`
 
 Exactly two normalized price members of a complete reference set.
 
@@ -246,7 +307,7 @@ Constraints:
 - Only `AVAILABLE` rows with `REALTIME` or an explicitly approved delayed policy can be candidates. `STALE` and `UNAVAILABLE` rows are attempt/audit data and cannot activate a pair.
 - A complete set has one reference type, provider, source feed, trading date, and policy version. No fallback can import a previous session's value.
 
-### 5.5 `reference_activation_events`
+#### 5.3.5 `reference_activation_events`
 
 Append-only audit log for activation and supersession.
 
@@ -314,7 +375,7 @@ Corrections should append a corrected observation or follow a documented revisio
 
 ### 6.3 `market_price_bars`
 
-Normalized price bars used for Profit Ratio comparison. Do not overload Daily Reference Prices for chart history because the two datasets have different timing and semantics.
+Normalized price bars used for Profit Ratio comparison. Do not overload Daily Close Anchors for chart history because the two datasets have different timing and semantics.
 
 | Column | Type | Rules / meaning |
 |---|---|---|
@@ -347,31 +408,31 @@ Start with normalized tables and repository queries. Add materialized views only
 
 Candidate read models:
 
-- Active relationship plus today's active reference set.
+- Active relationship plus its latest complete Daily Close Anchor.
 - Latest Profit Ratio per instrument/methodology.
 - Daily Profit Ratio and closing-price comparison by trading date.
 
 Rules:
 
-- “Current” is computed using `TradingCalendarPort`, not `CURRENT_DATE` alone.
-- Reference queries always select `status = 'active'` for the intended relationship/date/session.
+- The latest completed trading session is computed using `CompletedSessionCalendar`, not `CURRENT_DATE` alone.
+- Anchor queries select a `COMPLETE` version for the exact expected completed trading date.
 - Historical Profit Ratio responses use one methodology version unless they return explicit break metadata.
 - Missing observations remain missing. Database queries must not silently interpolate or forward-fill.
 
 ## 8. Transactions and concurrency
 
-### 8.1 Reference capture
+### 8.1 Daily Close Anchor capture
 
 For each valid pair, a transaction should:
 
-1. Acquire a relationship/date/session-scoped lock or rely on a safe uniqueness retry.
-2. Insert the reference-set version and both price rows.
-3. Validate membership, completeness, freshness, timestamp skew, and version.
-4. Activate the new set only if no active set exists, or follow the explicit correction workflow.
-5. Append activation events.
+1. Acquire a relationship/trading-date-scoped lock or rely on a safe uniqueness retry.
+2. Insert the anchor version and both role values.
+3. Validate membership, exact same date, positivity, provenance, quality, timestamps, and version.
+4. Make the version calculator-eligible only if both values are `AVAILABLE`.
+5. Append correction/audit metadata where applicable.
 6. Commit atomically.
 
-No reader should observe an active set with one price.
+No reader should calculate from an anchor with one usable price.
 
 ### 8.2 Ingestion idempotency
 
@@ -382,7 +443,7 @@ No reader should observe an active set with one price.
 
 ## 9. Retention, audit, and data rights
 
-- Keep Daily Reference Price versions and activation events long enough to reproduce any displayed result; default proposal is indefinite while the product is young.
+- Keep Daily Close Anchor versions long enough to reproduce any displayed result; default proposal is indefinite while the product is young.
 - Keep capture failures for an operationally useful period, then aggregate or delete under a documented retention policy.
 - Retain raw provider payloads only if licensing, privacy, and operational need permit it. Prefer bounded normalized provenance over raw payload storage.
 - Provider licensing may limit storage duration, derived data, or redistribution. Confirm rights before finalizing production retention.
@@ -403,7 +464,7 @@ Recommended migration order when PostgreSQL implementation starts:
 
 1. Instrument catalog and provider mappings.
 2. Effective-dated leveraged product relationships.
-3. Capture runs, attempts, immutable reference sets/prices, and activation audit.
+3. Immutable Daily Close Anchors/values and correction audit.
 4. Profit Ratio methodologies and observations.
 5. Market price bars.
 6. Performance indexes/materialized views only after query measurement.
@@ -414,7 +475,7 @@ Each migration requires repository integration tests for constraints and rollbac
 
 - Confirm numeric precision/scale from chosen providers and maximum supported prices.
 - Decide whether corrected provider observations append revisions or supersede through a separate revision link.
-- Choose exact active-reference enforcement (deferred trigger versus transaction plus constraints).
+- Choose exact complete-anchor selection enforcement (deferred trigger versus transaction plus constraints).
 - Confirm instrument-symbol history requirements and corporate-action source.
 - Approve Profit Ratio methodology and whether provider licensing permits historical storage.
 - Set retention periods for attempts, raw metadata, price bars, and analytics observations.

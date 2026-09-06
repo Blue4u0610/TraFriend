@@ -5,7 +5,6 @@ from datetime import date
 from typing import Sequence
 
 from trafriend_api.domain.models import (
-    DailyReferenceSet,
     Instrument,
     LeveragedRelationship,
     ProfitRatioHistory,
@@ -39,12 +38,7 @@ class MarketDataProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_reference(self, relationship_id: str) -> DailyReferenceSet:
-        raise NotImplementedError
-
-    @abstractmethod
     def get_profit_ratio_history(
         self, instrument_id: str, start: date, end: date
     ) -> ProfitRatioHistory:
         raise NotImplementedError
-

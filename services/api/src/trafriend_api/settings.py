@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, SecretStr
 
+from trafriend_api.domain.daily_close import DailyCloseQuality
 from trafriend_api.domain.overnight import DataQuality
 
 
@@ -17,6 +18,8 @@ class Settings(BaseModel):
     alpaca_bars_feed: str = "boats"
     alpaca_snapshot_quality: DataQuality = DataQuality.REALTIME
     alpaca_bars_quality: DataQuality = DataQuality.DELAYED
+    alpaca_daily_bars_feed: str = "sip"
+    alpaca_daily_bars_quality: DailyCloseQuality = DailyCloseQuality.DELAYED
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -57,5 +60,13 @@ class Settings(BaseModel):
             ),
             alpaca_bars_quality=DataQuality(
                 os.getenv("TRAFRIEND_ALPACA_BARS_QUALITY", "DELAYED").upper()
+            ),
+            alpaca_daily_bars_feed=os.getenv(
+                "TRAFRIEND_ALPACA_DAILY_BARS_FEED", "sip"
+            ),
+            alpaca_daily_bars_quality=DailyCloseQuality(
+                os.getenv(
+                    "TRAFRIEND_ALPACA_DAILY_BARS_QUALITY", "DELAYED"
+                ).upper()
             ),
         )

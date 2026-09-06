@@ -42,25 +42,33 @@ class RelationshipSchema(FromDomainModel):
     effective_to: Optional[date] = None
 
 
-class ReferencePriceSchema(FromDomainModel):
-    instrument_id: str
+class DailyCloseAnchorValueSchema(FromDomainModel):
     symbol: str
-    price: Decimal
-    quoted_at: datetime
+    close: Optional[Decimal]
+    trading_date: Optional[date]
+    market_timestamp: Optional[datetime]
+    observed_at: datetime
+    source: str
+    source_feed: str
+    currency: Literal["USD"]
+    quality: Literal["REALTIME", "DELAYED", "STALE", "UNAVAILABLE"]
+    status: Literal["AVAILABLE", "REJECTED", "MISSING"]
+    message: str
 
 
-class DailyReferenceSetSchema(FromDomainModel):
+class DailyCloseAnchorSchema(FromDomainModel):
     id: str
     relationship_id: str
     trading_date: date
-    session: str
-    status: Literal["active"]
+    status: Literal["COMPLETE", "PARTIAL", "UNAVAILABLE"]
     version: int
-    underlying: ReferencePriceSchema
-    leveraged_product: ReferencePriceSchema
+    underlying: DailyCloseAnchorValueSchema
+    leveraged_product: DailyCloseAnchorValueSchema
+    session_closed_at: datetime
     captured_at: datetime
-    provider: Literal["mock"]
-    freshness: Literal["current", "stale", "unknown"]
+    provider: str
+    source_feed: str
+    anchor_type: Literal["DAILY_CLOSE_ANCHOR"]
 
 
 class InstrumentCollectionResponse(BaseModel):
@@ -84,14 +92,14 @@ class LeveragedProductsResponse(BaseModel):
     meta: ResponseMeta
 
 
-class DailyReferenceResponse(BaseModel):
-    data: DailyReferenceSetSchema
+class DailyCloseAnchorResponse(BaseModel):
+    data: DailyCloseAnchorSchema
     meta: ResponseMeta
 
 
 class CalculationRequest(BaseModel):
     relationship_id: str
-    reference_version_id: str
+    anchor_version_id: str
     input_side: Literal["underlying", "leveraged_product"]
     target_price: Decimal
 
@@ -117,15 +125,16 @@ class CalculationOutputSchema(BaseModel):
     theoretical_target_price: Decimal
 
 
-class CalculationReferenceSchema(BaseModel):
+class CalculationAnchorSchema(BaseModel):
     id: str
+    anchor_type: Literal["DAILY_CLOSE_ANCHOR"]
     trading_date: date
-    session: str
-    underlying_price: Decimal
-    leveraged_product_price: Decimal
-    underlying_quoted_at: datetime
-    leveraged_product_quoted_at: datetime
+    underlying_close: Decimal
+    leveraged_product_close: Decimal
+    underlying_market_timestamp: datetime
+    leveraged_product_market_timestamp: datetime
     provider: str
+    source_feed: str
 
 
 class WarningSchema(BaseModel):
@@ -142,7 +151,7 @@ class CalculationData(BaseModel):
     output: CalculationOutputSchema
     underlying_return: Decimal
     leveraged_return: Decimal
-    reference: CalculationReferenceSchema
+    anchor: CalculationAnchorSchema
     calculated_at: datetime
     warnings: List[WarningSchema]
 
@@ -209,4 +218,3 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str
     market_data_provider: Literal["mock"]
-
