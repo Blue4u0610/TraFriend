@@ -15,6 +15,10 @@ from trafriend_api.scripts.calculate_mtd_rankings import build_ranking_service
 from trafriend_api.settings import Settings
 
 
+def _exit_code_for_status(status: str) -> int:
+    return 0 if status in {"COMPLETE", "SKIPPED"} else 2
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     if argv:
         print("This command does not accept arguments", file=sys.stderr)
@@ -44,8 +48,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Daily Close: {report.daily_close_status}")
         print(f"Inserted: {report.daily_close_report.inserted}")
         print(f"Existing: {report.daily_close_report.existing}")
+        print(
+            "Skipped No Supported Product: "
+            f"{report.daily_close_report.skipped_no_supported_product}"
+        )
         print(f"Unavailable: {report.daily_close_report.unavailable}")
-        return 0 if report.status in {"VALID", "SKIPPED"} else 2
+        print(f"Conflicts: {report.daily_close_report.conflicts}")
+        return _exit_code_for_status(report.status)
     except (SQLAlchemyError, ValueError) as exc:
         print(
             f"Daily market update failed: {exc.__class__.__name__}",

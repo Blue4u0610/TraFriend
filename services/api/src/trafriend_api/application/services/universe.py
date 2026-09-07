@@ -81,8 +81,18 @@ class DailyCaptureReport:
         return sum(item.status == "EXISTING" for item in self.items)
 
     @property
+    def skipped_no_supported_product(self) -> int:
+        return sum(
+            item.status == "SKIPPED_NO_SUPPORTED_PRODUCT" for item in self.items
+        )
+
+    @property
     def unavailable(self) -> int:
         return sum(item.status == "UNAVAILABLE" for item in self.items)
+
+    @property
+    def conflicts(self) -> int:
+        return sum(item.status == "CONFLICT" for item in self.items)
 
 
 class UniverseService:
@@ -189,9 +199,19 @@ class UniverseService:
         ranking_period: str = "2026-09",
     ) -> DailyCaptureReport:
         dataset = self.popular(ranking_period=ranking_period)
-        return self.capture_symbols(tuple(row.symbol for row in dataset.rows))
+        return self._capture_symbols(
+            tuple(row.symbol for row in dataset.rows),
+            skip_no_supported_product=True,
+        )
 
     def capture_symbols(self, symbols: Sequence[str]) -> DailyCaptureReport:
+        return self._capture_symbols(symbols, skip_no_supported_product=False)
+
+    def _capture_symbols(
+        self,
+        symbols: Sequence[str],
+        skip_no_supported_product: bool,
+    ) -> DailyCaptureReport:
         session = self._anchor_service.expected_session()
         underlying_symbols: set[str] = set()
         leveraged_symbols: set[str] = set()
@@ -201,6 +221,12 @@ class UniverseService:
                 underlying = self.get_underlying(symbol)
                 relationships = self._catalog.get_leveraged_relationships(underlying.id)
             except ResourceNotFoundError as exc:
+                if skip_no_supported_product:
+                    underlying_symbols.add(symbol)
+                    items.append(
+                        self._skipped_no_supported_product(symbol)
+                    )
+                    continue
                 items.append(
                     CaptureItem(
                         relationship_id="",
@@ -213,6 +239,20 @@ class UniverseService:
                 )
                 continue
             underlying_symbols.add(underlying.symbol)
+            if not relationships:
+                items.append(
+                    self._skipped_no_supported_product(underlying.symbol)
+                    if skip_no_supported_product
+                    else CaptureItem(
+                        relationship_id="",
+                        underlying_symbol=underlying.symbol,
+                        leveraged_product_symbol="",
+                        status="UNAVAILABLE",
+                        message="underlying has no supported leveraged products",
+                        anchor=None,
+                    )
+                )
+                continue
             for relationship in relationships:
                 leveraged_symbols.add(relationship.leveraged_product.symbol)
                 if not self._capture_enabled:
@@ -269,18 +309,22 @@ class UniverseService:
                             leveraged_product_symbol=(
                                 relationship.leveraged_product.symbol
                             ),
-                            status="UNAVAILABLE",
+                            status="CONFLICT",
                             message=f"capture failed: {exc.__class__.__name__}",
                             anchor=None,
                         )
                     )
-        succeeded = sum(item.status in {"INSERTED", "EXISTING"} for item in items)
-        failed = len(items) - succeeded
+        completed = sum(
+            item.status
+            in {"INSERTED", "EXISTING", "SKIPPED_NO_SUPPORTED_PRODUCT"}
+            for item in items
+        )
+        failed = len(items) - completed
         status = (
-            "VALID"
+            "COMPLETE"
             if items and failed == 0
             else "PARTIAL"
-            if succeeded
+            if completed
             else "FAILED"
         )
         return DailyCaptureReport(
@@ -289,6 +333,17 @@ class UniverseService:
             underlying_symbols=tuple(sorted(underlying_symbols)),
             leveraged_product_symbols=tuple(sorted(leveraged_symbols)),
             items=tuple(items),
+        )
+
+    @staticmethod
+    def _skipped_no_supported_product(symbol: str) -> CaptureItem:
+        return CaptureItem(
+            relationship_id="",
+            underlying_symbol=symbol,
+            leveraged_product_symbol="",
+            status="SKIPPED_NO_SUPPORTED_PRODUCT",
+            message="ranked underlying has no active supported leveraged product",
+            anchor=None,
         )
 
     def _resolve_relationship(

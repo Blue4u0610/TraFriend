@@ -86,9 +86,12 @@ class DailyMarketUpdateService:
         daily_close_status = capture_report.status
         if (
             capture_report.items
-            and capture_report.unavailable == 0
             and capture_report.inserted == 0
-            and capture_report.existing == len(capture_report.items)
+            and all(
+                item.status
+                in {"EXISTING", "SKIPPED_NO_SUPPORTED_PRODUCT"}
+                for item in capture_report.items
+            )
         ):
             daily_close_status = "SKIPPED"
 
@@ -100,7 +103,7 @@ class DailyMarketUpdateService:
         elif ranking_status == "SKIPPED" and daily_close_status == "SKIPPED":
             status = "SKIPPED"
         else:
-            status = "VALID"
+            status = "COMPLETE"
 
         return DailyMarketUpdateReport(
             status=status,

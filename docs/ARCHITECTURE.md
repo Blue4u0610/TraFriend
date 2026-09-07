@@ -242,7 +242,18 @@ External scheduler or manual command
 
 Validation includes positive prices, expected currency, supported instrument status, expected trading date, provider/feed provenance, market timestamp, and observation time. A pair is atomic: one valid close and one missing/rejected close is not calculator-eligible.
 
-The legacy manual command captures one relationship per invocation. The `capture_popular_daily_closes` command expands each selected underlying into every active catalog relationship and isolates a missing child from unrelated valid pairs. Its logical identity is `(underlying_symbol, leveraged_product_symbol, trading_date)`. An identical retry returns the existing row. Materially different immutable facts for the same identity raise `AnchorConflictError`; no update occurs. A database trigger rejects direct row updates and deletes. A future correction workflow will require an explicit reviewed migration/version policy rather than weakening this invariant.
+The legacy manual command captures one relationship per invocation. The
+`capture_popular_daily_closes` command expands each selected underlying into every
+active catalog relationship and isolates a missing child from unrelated valid
+pairs. A ranked underlying with no active supported relationship is retained in
+the ranking but reported as `SKIPPED_NO_SUPPORTED_PRODUCT`; it causes no provider
+request and is neither unavailable nor retryable. A supported relationship's
+logical anchor identity is `(underlying_symbol, leveraged_product_symbol,
+trading_date)`. An identical retry returns the existing row. Materially different
+immutable facts for the same identity raise `AnchorConflictError`; no update
+occurs. A database trigger rejects direct row updates and deletes. A future
+correction workflow will require an explicit reviewed migration/version policy
+rather than weakening this invariant.
 
 ### 6.3 Read workflow
 
@@ -265,7 +276,18 @@ If the expected completed-session version is unavailable, partial, stale, mixed-
 
 ### 6.5 Scheduling
 
-Scheduling stays outside the request-serving web process. `run_daily_market_update` is the production orchestration entry point: it refreshes the current month-to-date ranking and then delegates Daily Close work to the existing idempotent popular-capture service. It asks the exchange calendar for the latest completed session on every invocation, so DST, holidays, weekends, and early closes are not encoded in cron time. An already-current invocation exits successfully as `SKIPPED`; provider publication lag is `PARTIAL_RETRYABLE`. The lower-level `capture_popular_daily_closes` command remains available for initialization and targeted operations. No command contains a persistent loop and FastAPI never starts a scheduler.
+Scheduling stays outside the request-serving web process.
+`run_daily_market_update` is the production orchestration entry point: it refreshes
+the current month-to-date ranking and then delegates Daily Close work to the
+existing idempotent popular-capture service. It asks the exchange calendar for the
+latest completed session on every invocation, so DST, holidays, weekends, and
+early closes are not encoded in cron time. An already-current invocation exits
+successfully as `SKIPPED`; a run containing only `INSERTED`, `EXISTING`, and
+`SKIPPED_NO_SUPPORTED_PRODUCT` outcomes is complete and exits zero. Provider
+publication lag or another supported-relationship failure is
+`PARTIAL_RETRYABLE`. The lower-level `capture_popular_daily_closes` command remains
+available for initialization and targeted operations. No command contains a
+persistent loop and FastAPI never starts a scheduler.
 
 Market rankings are calculated independently from the anchor workflow. `MarketRankingService` obtains Alpaca's active U.S.-equity asset universe through `RankingMarketDataProvider`, applies explicit security exclusions, requests raw SIP daily bars in batches, and calculates `SUM(daily VWAP * daily share volume)` only for symbols complete across every exchange-calendar session. The original September 2026 dataset retains its explicit `SEPTEMBER_TO_DATE` state; later incomplete periods use `MONTH_TO_DATE`. `MarketRankingRepository.replace_verified_rows` atomically replaces one effective period/type, preserving ranking/anchor separation and rerun idempotency. A source-attributed CSV importer remains as an alternate ingestion boundary.
 

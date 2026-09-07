@@ -145,7 +145,17 @@ TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca \
   --symbols QQQ,SNDK
 ```
 
-Omit `--symbols` only after a verified popular dataset is populated. The command resolves the actual latest completed XNYS session, reports `VALID`, `PARTIAL`, or `FAILED`, and returns exit status 0, 2, or 1 respectively. It is safe to retry: complete identical anchors report `EXISTING`; missing products remain unavailable without corrupting valid siblings.
+Omit `--symbols` only after a verified popular dataset is populated. The command
+resolves the actual latest completed XNYS session, reports `COMPLETE`, `PARTIAL`,
+or `FAILED`, and returns exit status 0, 2, or 1 respectively. It is safe to
+retry: complete identical anchors report `EXISTING`; missing provider data for a
+supported product remains unavailable without corrupting valid siblings.
+
+A ranked underlying may legitimately have no active calculator-supported
+leveraged product. Popular capture reports it separately as
+`SKIPPED_NO_SUPPORTED_PRODUCT`, does not request market data for it, and does not
+make an otherwise successful run partial or retryable. The ranking row remains
+visible in the Popular API with a supported-product count of zero.
 
 An external cron or deployment scheduler may invoke this command after the regular session and retry publication lag. Do not put a loop or sleep in FastAPI and do not hardcode a UTC close time. The command always asks the exchange calendar, which handles DST, weekends, holidays, and early closes.
 

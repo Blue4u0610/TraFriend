@@ -202,7 +202,11 @@ Disclosures must be readable without blocking normal use and must not be hidden 
 
 ### 7.3 Reliability and observability
 
-- Daily Close Anchor capture reports success, partial failure, validation failure, and provider failure separately.
+- Daily Close Anchor capture reports inserted, existing, structurally skipped,
+  unavailable, conflict, validation-failure, and provider-failure outcomes
+  separately. A ranked underlying with zero active supported leveraged products
+  remains in Popular, skips provider capture, and is not a partial/retryable
+  failure.
 - Logs use correlation IDs and exclude secrets.
 - Metrics cover capture freshness, capture failure rate, provider latency/errors, calculation error rate, and API latency.
 - The public UI shows a clear unavailable/stale state rather than silently falling back to an old day.

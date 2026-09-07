@@ -1,6 +1,22 @@
+from datetime import date, datetime, timezone
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
+from trafriend_api.application.services.daily_close_anchor import DailyCloseAnchorService
+from trafriend_api.application.services.universe import UniverseService
+from trafriend_api.domain.universe import (
+    MarketRanking,
+    RankingPeriodStatus,
+    RankingType,
+)
+from trafriend_api.infrastructure.calendar import NyseTradingCalendar
+from trafriend_api.infrastructure.catalog import InMemoryLeveragedRelationshipCatalog
 from trafriend_api.infrastructure.market_data.mock import MockMarketDataProvider
+from trafriend_api.infrastructure.persistence import (
+    InMemoryDailyCloseAnchorRepository,
+    InMemoryMarketRankingRepository,
+)
 from trafriend_api.main import create_app
 from trafriend_api.settings import Settings
 
@@ -127,6 +143,61 @@ def test_popular_endpoint_is_explicitly_not_populated(client: TestClient) -> Non
     assert data["period_status"] == "SEPTEMBER_TO_DATE"
     assert data["population_status"] == "NOT_POPULATED"
     assert data["rows"] == []
+
+
+def test_popular_api_keeps_ranked_stock_with_zero_supported_products() -> None:
+    now = datetime(2026, 9, 4, 21, tzinfo=timezone.utc)
+    provider = MockMarketDataProvider(now=lambda: now)
+    relationships = {
+        relationship.id: relationship
+        for instrument in provider.search_instruments("", 25)
+        for relationship in provider.get_leveraged_relationships(instrument.id)
+    }
+    ranking = MarketRanking(
+        ranking_period="2026-09",
+        period_start=date(2026, 9, 1),
+        period_end=date(2026, 9, 4),
+        period_status=RankingPeriodStatus.SEPTEMBER_TO_DATE,
+        ranking_type=RankingType.DOLLAR_TRADING_VOLUME,
+        rank=1,
+        symbol="WMT",
+        display_name="Walmart Inc.",
+        exchange="NYSE",
+        trading_metric=Decimal("1000000"),
+        calculated_at=now,
+        source="verified-test-fixture",
+    )
+    app = create_app(Settings())
+    app.state.universe_service = UniverseService(
+        catalog=InMemoryLeveragedRelationshipCatalog(relationships.values()),
+        ranking_repository=InMemoryMarketRankingRepository((ranking,)),
+        anchor_service=DailyCloseAnchorService(
+            provider=provider,
+            calendar=NyseTradingCalendar(),
+            repository=InMemoryDailyCloseAnchorRepository(),
+            now=lambda: now,
+        ),
+    )
+
+    with TestClient(app) as popular_client:
+        response = popular_client.get("/api/v1/popular")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["rows"] == [
+        {
+            "rank": 1,
+            "symbol": "WMT",
+            "name": "Walmart Inc.",
+            "trading_metric": "1000000",
+            "calculated_at": "2026-09-04T21:00:00Z",
+            "source": "verified-test-fixture",
+            "completeness_status": "COMPLETE",
+            "sessions_observed": 0,
+            "sessions_expected": 0,
+            "supported_leveraged_products": 0,
+        }
+    ]
+    assert provider.daily_close_request_log == []
 
 
 def test_forward_calculation_uses_active_mock_close_anchor(client: TestClient) -> None:

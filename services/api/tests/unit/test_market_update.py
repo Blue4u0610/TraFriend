@@ -15,6 +15,7 @@ from trafriend_api.domain.universe import (
     RankingPopulationStatus,
     RankingType,
 )
+from trafriend_api.scripts.run_daily_market_update import _exit_code_for_status
 
 UTC = timezone.utc
 NOW = datetime(2026, 9, 7, 16, tzinfo=UTC)
@@ -107,6 +108,33 @@ def _capture(status: str, item_status: str) -> DailyCaptureReport:
     )
 
 
+def _capture_with_structural_skip() -> DailyCaptureReport:
+    return DailyCaptureReport(
+        trading_date="2026-09-04",
+        status="COMPLETE",
+        underlying_symbols=("QQQ", "WMT"),
+        leveraged_product_symbols=("TQQQ",),
+        items=(
+            CaptureItem(
+                relationship_id="rel_qqq_tqqq_3x",
+                underlying_symbol="QQQ",
+                leveraged_product_symbol="TQQQ",
+                status="EXISTING",
+                message="test",
+                anchor=None,
+            ),
+            CaptureItem(
+                relationship_id="",
+                underlying_symbol="WMT",
+                leveraged_product_symbol="",
+                status="SKIPPED_NO_SUPPORTED_PRODUCT",
+                message="test",
+                anchor=None,
+            ),
+        ),
+    )
+
+
 def _dataset(current: bool) -> PopularDataset:
     rows = (_row(),) if current else (_row(date(2026, 9, 3)),)
     return PopularDataset(
@@ -124,7 +152,7 @@ def test_weekend_or_holiday_rerun_skips_current_data() -> None:
         calendar=FakeCalendar(),
         ranking_repository=FakeRepository(_dataset(current=True)),
         ranking_builder=builder,
-        daily_close_capture=FakeCapture(_capture("VALID", "EXISTING")),
+        daily_close_capture=FakeCapture(_capture("COMPLETE", "EXISTING")),
         now=lambda: NOW,
     ).run()
 
@@ -140,14 +168,30 @@ def test_new_session_updates_ranking_and_inserts_daily_close() -> None:
         calendar=FakeCalendar(),
         ranking_repository=FakeRepository(_dataset(current=False)),
         ranking_builder=builder,
-        daily_close_capture=FakeCapture(_capture("VALID", "INSERTED")),
+        daily_close_capture=FakeCapture(_capture("COMPLETE", "INSERTED")),
         now=lambda: NOW,
     ).run()
 
-    assert report.status == "VALID"
+    assert report.status == "COMPLETE"
     assert report.ranking_status == "UPDATED"
-    assert report.daily_close_status == "VALID"
+    assert report.daily_close_status == "COMPLETE"
     assert builder.calls == 1
+
+
+def test_zero_product_ranked_symbol_does_not_trigger_cron_retry() -> None:
+    report = DailyMarketUpdateService(
+        calendar=FakeCalendar(),
+        ranking_repository=FakeRepository(_dataset(current=True)),
+        ranking_builder=FakeRankingBuilder(),
+        daily_close_capture=FakeCapture(_capture_with_structural_skip()),
+        now=lambda: NOW,
+    ).run()
+
+    assert report.status == "SKIPPED"
+    assert report.daily_close_status == "SKIPPED"
+    assert report.daily_close_report.skipped_no_supported_product == 1
+    assert report.daily_close_report.unavailable == 0
+    assert _exit_code_for_status(report.status) == 0
 
 
 def test_provider_lag_is_explicitly_retryable() -> None:
@@ -161,3 +205,4 @@ def test_provider_lag_is_explicitly_retryable() -> None:
 
     assert report.status == "PARTIAL_RETRYABLE"
     assert report.daily_close_report.unavailable == 1
+    assert _exit_code_for_status(report.status) == 2

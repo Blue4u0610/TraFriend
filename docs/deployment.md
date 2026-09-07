@@ -93,6 +93,11 @@ python -m trafriend_api.scripts.capture_popular_daily_closes --provider alpaca
 Both commands are idempotent. Ranking data is atomically replaced from verified
 source bars. Identical anchors return `EXISTING`; conflicting immutable values are
 not overwritten. Neither command falls back to an older market session.
+Ranked stocks with no active calculator-supported leveraged product remain in the
+Popular dataset but report `SKIPPED_NO_SUPPORTED_PRODUCT`. They do not trigger a
+market-data request, count as unavailable, or make the command retryable. Capture
+output reports inserted, existing, structural skips, unavailable rows, and
+conflicts separately.
 
 ## 7. Deploy Render FastAPI
 
@@ -164,7 +169,8 @@ completed session, including holidays and early closes. A weekend, holiday, or
 second run with current ranking and anchors reports `SKIPPED` and exits zero. Missing
 or delayed provider data reports `PARTIAL_RETRYABLE` and exits 2 without substituting
 an older session; retry the same idempotent command after the provider publishes.
-FastAPI contains no scheduler or infinite loop.
+Zero-product ranked symbols are successful structural skips and never cause that
+retry status. FastAPI contains no scheduler or infinite loop.
 
 ## 11. Validate the deployment
 

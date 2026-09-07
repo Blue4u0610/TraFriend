@@ -66,7 +66,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         print(f"Inserted: {report.inserted}")
         print(f"Existing: {report.existing}")
+        print(
+            "Skipped No Supported Product: "
+            f"{report.skipped_no_supported_product}"
+        )
         print(f"Unavailable: {report.unavailable}")
+        print(f"Conflicts: {report.conflicts}")
         for item in report.items:
             pair = (
                 f"{item.underlying_symbol}/{item.leveraged_product_symbol}"
@@ -74,7 +79,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 else item.underlying_symbol
             )
             print(f"{pair}: {item.status} ({item.message})")
-        return 0 if report.status == "VALID" else 2 if report.status == "PARTIAL" else 1
+        return (
+            0
+            if report.status == "COMPLETE"
+            else 2
+            if report.status == "PARTIAL"
+            else 1
+        )
     except (SQLAlchemyError, ValueError) as exc:
         print(
             f"Popular daily-close capture failed: {exc.__class__.__name__}",

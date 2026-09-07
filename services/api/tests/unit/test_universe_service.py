@@ -25,6 +25,21 @@ UTC = timezone.utc
 NOW = datetime(2026, 9, 4, 21, tzinfo=UTC)
 
 
+def _ranking(symbol: str, rank: int = 1) -> MarketRanking:
+    return MarketRanking(
+        ranking_period="2026-09",
+        period_start=date(2026, 9, 1),
+        period_end=date(2026, 9, 4),
+        period_status=RankingPeriodStatus.SEPTEMBER_TO_DATE,
+        ranking_type=RankingType.DOLLAR_TRADING_VOLUME,
+        rank=rank,
+        symbol=symbol,
+        trading_metric=Decimal("123456789.12"),
+        calculated_at=NOW,
+        source="verified-test-fixture",
+    )
+
+
 def _catalog(provider: MockMarketDataProvider) -> InMemoryLeveragedRelationshipCatalog:
     relationships = {
         relationship.id: relationship
@@ -147,6 +162,8 @@ def test_daily_job_is_idempotent_and_isolates_one_missing_product() -> None:
     assert first.unavailable == 1
     assert second.existing == 2
     assert second.unavailable == 1
+    assert second.skipped_no_supported_product == 0
+    assert second.conflicts == 0
     assert set(first.leveraged_product_symbols) == {"QLD", "TQQQ", "SQQQ"}
 
 
@@ -236,10 +253,35 @@ def test_popular_capture_expands_ranked_underlying_to_every_product() -> None:
 
     report = service.capture_popular()
 
-    assert report.status == "VALID"
+    assert report.status == "COMPLETE"
     assert report.underlying_symbols == ("QQQ",)
     assert set(report.leveraged_product_symbols) == {"QLD", "TQQQ", "SQQQ"}
     assert report.inserted == 3
+
+
+def test_popular_capture_skips_ranked_underlying_without_supported_product() -> None:
+    provider = MockMarketDataProvider(now=lambda: NOW)
+    rankings = InMemoryMarketRankingRepository(
+        (_ranking("QQQ"), _ranking("WMT", rank=2))
+    )
+    service = _service(provider=provider, rankings=rankings)
+
+    report = service.capture_popular()
+
+    assert report.status == "COMPLETE"
+    assert report.inserted == 3
+    assert report.existing == 0
+    assert report.skipped_no_supported_product == 1
+    assert report.unavailable == 0
+    assert report.conflicts == 0
+    assert {item.status for item in report.items} == {
+        "INSERTED",
+        "SKIPPED_NO_SUPPORTED_PRODUCT",
+    }
+    assert all(
+        "WMT" not in requested_symbols
+        for requested_symbols, _, _ in provider.daily_close_request_log
+    )
 
 
 def test_unsupported_symbol_is_explicit() -> None:
