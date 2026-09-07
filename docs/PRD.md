@@ -5,8 +5,8 @@
 - Product: TraFriend
 - Release: MVP
 - Audience: product, design, frontend, backend, data, and QA contributors
-- Status: implemented Mock calculator vertical slice; production ingestion remains pending
-- Last updated: 2026-09-05
+- Status: searchable/watchlist calculator and real September-to-date Top-100 are implemented; public data licensing remains pending
+- Last updated: 2026-09-06
 
 This document defines product behavior and release boundaries. Technical design lives in `ARCHITECTURE.md`, HTTP contracts in `API_SPEC.md`, and persistence design in `DATA_MODEL.md`.
 
@@ -89,7 +89,7 @@ The calculator's authoritative reference is `DAILY_CLOSE_ANCHOR`: the underlying
 - Request provider daily bars for exactly that expected trading date and use each bar's close.
 - Accept the pair only when both values are finite, positive, from the configured provider/feed, and assigned to the same expected trading date.
 - Reject provider lag, a missing member, mixed dates, stale/unavailable quality, malformed values, and future timestamps. Never substitute a prior session or a zero.
-- Store each attempt as an immutable version. Only a `COMPLETE` pair is calculator-eligible; `PARTIAL` and `UNAVAILABLE` remain explicit operational outcomes.
+- Persist each `COMPLETE` pair as an immutable version. `PARTIAL` and `UNAVAILABLE` remain explicit operational outcomes but are not inserted into the calculator-anchor table; the read service independently rejects an older row when its date is not the calendar-derived latest completed session.
 - Return provider, feed, market timestamps, observation timestamps, expected session close, capture time, and trading date so the result can be reproduced.
 - Keep calculator reads independent of live provider requests by loading a server-owned stored anchor version.
 
@@ -150,6 +150,27 @@ Profit Ratio is not a universally standardized metric. Before a real provider is
 
 Profit Ratio OHLC/candlestick data is a post-MVP option. It may enter the MVP only if the chosen provider supplies sufficiently frequent observations or the system deliberately samples them. OHLC must never be fabricated from one daily point.
 
+### 6.4a Search, popular universe, and watchlist
+
+- Present separate underlying and leveraged-product searches. Both read the local
+  provider-independent catalog by ticker or name and never call a market provider on
+  each keystroke.
+- Selecting a supported underlying or leveraged ETF resolves the canonical underlying, checks every active relationship for the latest completed-session anchor, and captures only missing pairs on demand.
+- A leveraged-product selection preselects that product in reverse-calculation mode
+  while retaining every sibling product for the underlying.
+- On-demand capture retrieves only the latest completed regular-session daily close;
+  it never substitutes an intraday, overnight, or previous-session price.
+- One underlying target calculates every available mapped leveraged ETF. Missing child anchors remain visible as `Unavailable` without invalidating siblings.
+- Reverse mode accepts one leveraged ETF target at a time and calculates its implied underlying target.
+- The browser watchlist stores underlying symbols in `localStorage`; no user account is required.
+- Popular rankings are a separate dataset. The approved September 2026 metric is `SUM(daily VWAP * daily share volume)` across every completed exchange-calendar session. September 2026 is `SEPTEMBER_TO_DATE` until the month is complete.
+- Build candidates from Alpaca's active listed U.S.-equity assets, batch raw SIP daily-bar requests, and require one authoritative VWAP/volume bar per completed session. Missing VWAP makes that symbol incomplete; do not mix a close-price fallback into selected rows.
+- Exclude reliably identified leveraged/inverse products, ETFs/ETNs, warrants, rights, units, preferred shares, OTC issues, and blank-check vehicles. Document that Alpaca asset metadata does not provide a comprehensive security-type classification.
+- Treat leveraged-product coverage as a dated catalog snapshot. Refresh it against
+  active assets and authoritative issuer catalogs; never infer a new relationship
+  solely from a product ticker or name. Option-income, different-index/basket, and
+  non-daily-reset products are outside this calculator's relationship set.
+
 ### 6.5 Disclosures and user communication
 
 Every result view must communicate that:
@@ -205,6 +226,7 @@ Disclosures must be readable without blocking normal use and must not be hidden 
 - Current and historical Profit Ratio with a price comparison when a defined data source is available.
 - Mock providers and deterministic fixtures for local development and CI.
 - Basic operational health, data freshness, error states, and disclosures.
+- Searchable leveraged-product universe, multi-product calculation, local watchlist, and a source-attributed popular-ranking import path.
 
 ### 8.2 Out of scope
 
@@ -227,6 +249,8 @@ The calculator area is MVP-ready when:
 - The API and UI show the exact Daily Close Anchor and formula inputs used.
 - Missing, stale, partial, and out-of-domain cases have tested, user-understandable states.
 - Unit, integration, and provider contract tests pass without network access using the Mock provider.
+- A cached symbol selection and every normal calculation make zero market-data-provider calls.
+- Re-running the popular daily-close command returns existing immutable rows and does not duplicate anchors.
 
 The Profit Ratio area is MVP-ready when:
 

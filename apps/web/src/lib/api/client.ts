@@ -5,8 +5,11 @@ import type {
   Health,
   Instrument,
   LeveragedProducts,
+  MultiCalculation,
+  PopularDataset,
   ProfitRatioHistory,
   ProfitRatioLatest,
+  UnderlyingWorkspace,
 } from "@/lib/api/types";
 
 const API_BASE_URL =
@@ -30,13 +33,22 @@ export class ApiError extends Error {
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      ...init?.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...init?.headers,
+      },
+    });
+  } catch {
+    throw new ApiError(
+      "The TraFriend data service is unavailable.",
+      "API_UNAVAILABLE",
+      0,
+    );
+  }
 
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as Problem;
@@ -57,6 +69,65 @@ export function getHealth(): Promise<Health> {
 export function searchInstruments(query: string): Promise<ApiResponse<Instrument[]>> {
   return fetchJson<ApiResponse<Instrument[]>>(
     `/api/v1/instruments/search?query=${encodeURIComponent(query)}&limit=10`,
+  );
+}
+
+export function searchUniverse(query: string): Promise<ApiResponse<Instrument[]>> {
+  return fetchJson<ApiResponse<Instrument[]>>(
+    `/api/v1/universe/search?q=${encodeURIComponent(query)}&limit=10`,
+  );
+}
+
+export function searchUnderlyings(
+  query: string,
+): Promise<ApiResponse<Instrument[]>> {
+  return fetchJson<ApiResponse<Instrument[]>>(
+    `/api/v1/universe/underlyings/search?q=${encodeURIComponent(query)}&limit=10`,
+  );
+}
+
+export function searchLeveragedProducts(
+  query: string,
+): Promise<ApiResponse<Instrument[]>> {
+  return fetchJson<ApiResponse<Instrument[]>>(
+    `/api/v1/universe/leveraged-products/search?q=${encodeURIComponent(query)}&limit=10`,
+  );
+}
+
+export function getUnderlyingWorkspace(
+  symbol: string,
+): Promise<ApiResponse<UnderlyingWorkspace>> {
+  return fetchJson<ApiResponse<UnderlyingWorkspace>>(
+    `/api/v1/underlyings/${encodeURIComponent(symbol)}`,
+  );
+}
+
+export function resolveUnderlyingWorkspace(
+  symbol: string,
+): Promise<ApiResponse<UnderlyingWorkspace>> {
+  return fetchJson<ApiResponse<UnderlyingWorkspace>>(
+    `/api/v1/underlyings/${encodeURIComponent(symbol)}/resolve`,
+    { method: "POST" },
+  );
+}
+
+export function calculateAllProducts(
+  symbol: string,
+  targetPrice: string,
+): Promise<ApiResponse<MultiCalculation>> {
+  return fetchJson<ApiResponse<MultiCalculation>>(
+    `/api/v1/underlyings/${encodeURIComponent(symbol)}/calculations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_price: targetPrice }),
+    },
+  );
+}
+
+export function getPopularUniverse(): Promise<ApiResponse<PopularDataset>> {
+  return fetchJson<ApiResponse<PopularDataset>>(
+    "/api/v1/popular?ranking_period=2026-09&limit=100",
   );
 }
 

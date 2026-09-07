@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { DeveloperBadge } from "@/components/developer-badge";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { LocaleProvider } from "@/i18n/locale-provider";
@@ -40,6 +41,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
               {children}
             </main>
             <SiteFooter />
+            <DeveloperBadge />
           </div>
         </LocaleProvider>
       </body>

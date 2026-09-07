@@ -20,6 +20,8 @@ export type Instrument = {
     leveraged_relationships: boolean;
     profit_ratio: boolean;
   };
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type Relationship = {
@@ -30,6 +32,11 @@ export type Relationship = {
   objective_period: "daily";
   effective_from: string;
   effective_to: string | null;
+  issuer: string | null;
+  direction: "LONG" | "INVERSE" | null;
+  status: string;
+  authoritative_source: string | null;
+  verified_at: string | null;
 };
 
 export type LeveragedProducts = {
@@ -99,6 +106,57 @@ export type Calculation = {
   };
   calculated_at: string;
   warnings: { code: string; message: string }[];
+};
+
+export type AnchorResolution = {
+  relationship: Relationship;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  anchor_source: "CACHE" | "ON_DEMAND" | "NONE";
+  message: string;
+  anchor: DailyCloseAnchor | null;
+};
+
+export type UnderlyingWorkspace = {
+  underlying: Instrument;
+  rows: AnchorResolution[];
+};
+
+export type MultiCalculationRow = {
+  relationship: Relationship;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  anchor: DailyCloseAnchor | null;
+  theoretical_target_price: string | null;
+  underlying_return: string | null;
+  leveraged_return: string | null;
+  message: string;
+};
+
+export type MultiCalculation = {
+  underlying: Instrument;
+  target_price: string;
+  rows: MultiCalculationRow[];
+  formula_version: "leveraged-daily-close-linear/v2";
+};
+
+export type PopularRow = {
+  rank: number;
+  symbol: string;
+  name: string | null;
+  trading_metric: string;
+  calculated_at: string;
+  source: string;
+  completeness_status: "COMPLETE" | "INCOMPLETE";
+  sessions_observed: number;
+  sessions_expected: number;
+  supported_leveraged_products: number;
+};
+
+export type PopularDataset = {
+  ranking_period: string;
+  period_status: "SEPTEMBER_TO_DATE" | "FINAL";
+  ranking_type: "DOLLAR_TRADING_VOLUME";
+  population_status: "COMPLETE" | "PARTIAL" | "NOT_POPULATED";
+  rows: PopularRow[];
 };
 
 export type Methodology = {

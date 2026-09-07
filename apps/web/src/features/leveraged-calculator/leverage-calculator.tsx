@@ -1,13 +1,15 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownUp,
-  ArrowRight,
   CalendarClock,
   CircleAlert,
   Database,
   EqualApproximately,
+  Heart,
+  Plus,
+  Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +29,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Dictionary } from "@/i18n/dictionaries";
@@ -35,18 +36,31 @@ import { interpolate } from "@/i18n/dictionaries";
 import { useLocale } from "@/i18n/locale-provider";
 import {
   ApiError,
+  calculateAllProducts,
   calculateTarget,
-  getDailyCloseAnchor,
-  getLeveragedProducts,
+  getPopularUniverse,
+  resolveUnderlyingWorkspace,
+  searchLeveragedProducts,
+  searchUnderlyings,
 } from "@/lib/api/client";
 import type {
   Calculation,
-  DailyCloseAnchor,
-  LeveragedProducts,
-  Relationship,
+  MultiCalculation,
+  PopularDataset,
+  UnderlyingWorkspace,
 } from "@/lib/api/types";
 
-type InputSide = "underlying" | "leveraged_product";
+import {
+  addWatchlistSymbol,
+  loadWatchlist,
+  removeWatchlistSymbol,
+  saveWatchlist,
+} from "./watchlist";
+import { PopularUniverse } from "./popular-universe";
+import { InstrumentSearch } from "./universe-search";
+import { buildProductViewRows } from "./workspace-model";
+
+type CalculatorMode = "forward" | "reverse";
 
 function quantizeDecimal(value: string, places: number, decimalShift = 0) {
   const match = value.trim().match(/^(-?)(\d+)(?:\.(\d*))?$/);
@@ -62,9 +76,7 @@ function quantizeDecimal(value: string, places: number, decimalShift = 0) {
     const divisor = BigInt(10) ** BigInt(sourceScale - targetScale);
     const quotient = digits / divisor;
     const remainder = digits % divisor;
-    scaled =
-      quotient +
-      (remainder * BigInt(2) >= divisor ? BigInt(1) : BigInt(0));
+    scaled = quotient + (remainder * BigInt(2) >= divisor ? BigInt(1) : BigInt(0));
   }
   const placeScale = BigInt(10) ** BigInt(places);
   return {
@@ -109,12 +121,10 @@ function leverageLabel(factor: string) {
   return `${factor.startsWith("-") ? "" : "+"}${factor}x`;
 }
 
-function getErrorMessage(
-  error: unknown,
-  t: Dictionary["calculator"],
-) {
+function errorMessage(error: unknown, t: Dictionary["calculator"]) {
   if (error instanceof ApiError) {
     const messages: Record<string, string> = {
+      API_UNAVAILABLE: t.errors.apiUnavailable,
       RESOURCE_NOT_FOUND: t.errors.notFound,
       ANCHOR_VERSION_INACTIVE: t.errors.anchorChanged,
       ANCHOR_UNAVAILABLE: t.errors.anchorUnavailable,
@@ -129,419 +139,443 @@ function getErrorMessage(
 export function LeverageCalculator() {
   const { dictionary, locale } = useLocale();
   const t = dictionary.calculator;
-  const [products, setProducts] = useState<LeveragedProducts | null>(null);
-  const [relationshipId, setRelationshipId] = useState("");
-  const [anchor, setAnchor] = useState<DailyCloseAnchor | null>(null);
-  const [inputSide, setInputSide] = useState<InputSide>("underlying");
-  const [targetPrice, setTargetPrice] = useState("");
-  const [result, setResult] = useState<Calculation | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlistReady, setWatchlistReady] = useState(false);
+  const [workspace, setWorkspace] = useState<UnderlyingWorkspace | null>(null);
+  const [popular, setPopular] = useState<PopularDataset | null>(null);
+  const [popularError, setPopularError] = useState<string | null>(null);
+  const [mode, setMode] = useState<CalculatorMode>("forward");
+  const [forwardTarget, setForwardTarget] = useState("");
+  const [forwardResult, setForwardResult] = useState<MultiCalculation | null>(null);
+  const [reverseRelationshipId, setReverseRelationshipId] = useState("");
+  const [reverseTarget, setReverseTarget] = useState("");
+  const [reverseResult, setReverseResult] = useState<Calculation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    getLeveragedProducts("ins_qqq_xnas")
-      .then(({ data }) => {
-        if (!active) return;
-        setProducts(data);
-        setRelationshipId(data.relationships[0]?.id ?? "");
-      })
-      .catch((requestError) => {
-        if (active) setError(getErrorMessage(requestError, t));
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+  const localizedErrorMessage = useCallback(
+    (requestError: unknown) => errorMessage(requestError, t),
+    [t],
+  );
+
+  const selectSymbol = useCallback(
+    async (symbol: string) => {
+      setIsLoading(true);
+      setError(null);
+      setForwardResult(null);
+      setReverseResult(null);
+      try {
+        const { data } = await resolveUnderlyingWorkspace(symbol);
+        setWorkspace(data);
+        const available = data.rows.find(
+          (row) => row.status === "AVAILABLE" && row.anchor?.underlying.close,
+        );
+        setForwardTarget(available?.anchor?.underlying.close ?? "");
+        const selectedRow =
+          data.rows.find(
+            (row) => row.relationship.leveraged_product.symbol === symbol,
+          ) ?? data.rows[0];
+        setReverseRelationshipId(selectedRow?.relationship.id ?? "");
+        setReverseTarget(selectedRow?.anchor?.leveraged_product.close ?? "");
+      } catch (requestError) {
+        setError(errorMessage(requestError, t));
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [t],
+  );
+
+  const loadPopular = useCallback(async () => {
+    setPopular(null);
+    setPopularError(null);
+    try {
+      const { data } = await getPopularUniverse();
+      setPopular(data);
+    } catch (requestError) {
+      setPopularError(errorMessage(requestError, t));
+    }
   }, [t]);
 
   useEffect(() => {
-    if (!relationshipId) return;
-    let active = true;
-    getDailyCloseAnchor(relationshipId)
-      .then(({ data }) => {
-        if (!active) return;
-        if (
-          data.status !== "COMPLETE" ||
-          data.underlying.close === null ||
-          data.leveraged_product.close === null
-        ) {
-          throw new ApiError(t.errors.anchorUnavailable, "ANCHOR_UNAVAILABLE", 503);
-        }
-        setAnchor(data);
-        setTargetPrice(data.underlying.close);
-      })
-      .catch((requestError) => {
-        if (active) setError(getErrorMessage(requestError, t));
-      });
-    return () => {
-      active = false;
-    };
-  }, [relationshipId, t]);
-
-  const relationship = useMemo<Relationship | null>(
-    () =>
-      products?.relationships.find((item) => item.id === relationshipId) ?? null,
-    [products, relationshipId],
-  );
+    window.queueMicrotask(() => {
+      setWatchlist(loadWatchlist(window.localStorage));
+      setWatchlistReady(true);
+      void selectSymbol("QQQ");
+      void loadPopular();
+    });
+  }, [loadPopular, selectSymbol]);
 
   useEffect(() => {
-    const context = document.modelContext;
-    if (!context?.registerTool || !relationship || !anchor) return;
+    if (watchlistReady) saveWatchlist(window.localStorage, watchlist);
+  }, [watchlist, watchlistReady]);
 
-    const lifecycle = new AbortController();
-    const registration = context.registerTool(
-      {
-        name: "calculate_leveraged_target",
-        title: t.toolTitle,
-        description: t.toolDescription,
-        inputSchema: {
-          type: "object",
-          properties: {
-            inputSide: {
-              type: "string",
-              enum: ["underlying", "leveraged_product"],
-            },
-            targetPrice: {
-              type: "string",
-              pattern: "^[0-9]+(?:\\.[0-9]+)?$",
-            },
-          },
-          required: ["inputSide", "targetPrice"],
-          additionalProperties: false,
-        },
-        annotations: { readOnlyHint: true, untrustedContentHint: false },
-        async execute(input) {
-          if (!input || typeof input !== "object") {
-            throw new Error(t.invalidToolObject);
-          }
-          const candidate = input as Record<string, unknown>;
-          const nextSide = candidate.inputSide;
-          const nextPrice = candidate.targetPrice;
-          if (
-            (nextSide !== "underlying" && nextSide !== "leveraged_product") ||
-            typeof nextPrice !== "string" ||
-            !/^[0-9]+(?:\.[0-9]+)?$/.test(nextPrice)
-          ) {
-            throw new Error(t.invalidToolInput);
-          }
-
-          setInputSide(nextSide);
-          setTargetPrice(nextPrice);
-          setResult(null);
-          setError(null);
-          const response = await calculateTarget({
-            relationship_id: relationship.id,
-            anchor_version_id: anchor.id,
-            input_side: nextSide,
-            target_price: nextPrice,
-          });
-          setResult(response.data);
-          return {
-            symbol: response.data.output.symbol,
-            theoreticalTargetPrice:
-              response.data.output.theoretical_target_price,
-            formulaVersion: response.data.formula_version,
-            anchorVersionId: response.data.anchor.id,
-          };
-        },
-      },
-      { signal: lifecycle.signal },
-    );
-    void Promise.resolve(registration).catch(() => undefined);
-    return () => lifecycle.abort();
-  }, [anchor, relationship, t]);
-
-  function handleRelationshipChange(value: unknown) {
-    setRelationshipId(String(value));
-    setInputSide("underlying");
-    setAnchor(null);
-    setResult(null);
-    setError(null);
-  }
-
-  function handleInputSideChange(value: unknown) {
-    const nextSide = value as InputSide;
-    setInputSide(nextSide);
-    setResult(null);
-    setError(null);
-    if (anchor) {
-      const nextValue =
-        nextSide === "underlying"
-          ? anchor.underlying.close
-          : anchor.leveraged_product.close;
-      setTargetPrice(nextValue ?? "");
+  useEffect(() => {
+    if (
+      mode !== "forward" ||
+      !workspace ||
+      !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(forwardTarget) ||
+      /^0(?:\.0+)?$/.test(forwardTarget)
+    ) {
+      return;
     }
+    const timer = window.setTimeout(() => {
+      setIsCalculating(true);
+      calculateAllProducts(workspace.underlying.symbol, forwardTarget)
+        .then(({ data }) => setForwardResult(data))
+        .catch((requestError) => setError(errorMessage(requestError, t)))
+        .finally(() => setIsCalculating(false));
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [forwardTarget, mode, t, workspace]);
+
+  const selectedReverseRow = useMemo(
+    () =>
+      workspace?.rows.find(
+        (row) => row.relationship.id === reverseRelationshipId,
+      ) ?? null,
+    [reverseRelationshipId, workspace],
+  );
+  const productRows = useMemo(
+    () => (workspace ? buildProductViewRows(workspace, forwardResult) : []),
+    [forwardResult, workspace],
+  );
+  const firstAnchor = workspace?.rows.find((row) => row.anchor)?.anchor ?? null;
+  const isWatched = workspace
+    ? watchlist.includes(workspace.underlying.symbol)
+    : false;
+
+  function changeReverseRelationship(value: unknown) {
+    const id = String(value);
+    setReverseRelationshipId(id);
+    setReverseResult(null);
+    const row = workspace?.rows.find((candidate) => candidate.relationship.id === id);
+    setReverseTarget(row?.anchor?.leveraged_product.close ?? "");
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function submitReverse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!relationship || !anchor) return;
-
+    if (!selectedReverseRow?.anchor) return;
     setIsCalculating(true);
     setError(null);
-    setResult(null);
     try {
-      const response = await calculateTarget({
-        relationship_id: relationship.id,
-        anchor_version_id: anchor.id,
-        input_side: inputSide,
-        target_price: targetPrice,
+      const { data } = await calculateTarget({
+        relationship_id: selectedReverseRow.relationship.id,
+        anchor_version_id: selectedReverseRow.anchor.id,
+        input_side: "leveraged_product",
+        target_price: reverseTarget,
       });
-      setResult(response.data);
+      setReverseResult(data);
     } catch (requestError) {
-      setError(getErrorMessage(requestError, t));
+      setError(errorMessage(requestError, t));
     } finally {
       setIsCalculating(false);
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-        <Skeleton className="h-[34rem] rounded-2xl" />
-        <Skeleton className="h-[34rem] rounded-2xl" />
-      </div>
-    );
+  function addSelected() {
+    if (workspace) {
+      setWatchlist((current) =>
+        addWatchlistSymbol(current, workspace.underlying.symbol),
+      );
+    }
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-      <Card className="surface-glow border-white/[0.08] bg-card/85">
-        <CardHeader className="border-b border-white/[0.07]">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="space-y-5">
+      <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+        <Card className="surface-glow border-white/[0.08] bg-card/85">
+          <CardHeader>
+            <CardDescription className="data-label">{t.searchEyebrow}</CardDescription>
+            <CardTitle>{t.searchTitle}</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <InstrumentSearch
+              id="underlying-search"
+              title={t.underlyingSearchTitle}
+              label={t.underlyingSearchLabel}
+              placeholder={t.underlyingSearchPlaceholder}
+              loadingText={t.searchLoading}
+              noMatchesText={t.underlyingSearchNoMatches}
+              search={searchUnderlyings}
+              errorMessage={localizedErrorMessage}
+              onSelect={selectSymbol}
+            />
+            <InstrumentSearch
+              id="leveraged-product-search"
+              title={t.productSearchTitle}
+              label={t.productSearchLabel}
+              placeholder={t.productSearchPlaceholder}
+              loadingText={t.searchLoading}
+              noMatchesText={t.productSearchNoMatches}
+              search={searchLeveragedProducts}
+              errorMessage={localizedErrorMessage}
+              onSelect={selectSymbol}
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="surface-glow border-white/[0.08] bg-card/85">
+          <CardHeader className="flex-row items-center justify-between">
             <div>
-              <CardDescription className="data-label mb-2">{t.relationship}</CardDescription>
-              <CardTitle className="text-2xl">{t.selectProduct}</CardTitle>
+              <CardDescription className="data-label">{t.watchlistEyebrow}</CardDescription>
+              <CardTitle>{t.watchlistTitle}</CardTitle>
             </div>
-            <Badge variant="outline" className="w-fit border-primary/25 text-primary">
-              {t.mockReference}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-6">
-          <div className="space-y-2">
-            <label htmlFor="relationship" className="text-sm font-medium">
-              {t.pairLabel}
-            </label>
-            <Select value={relationshipId} onValueChange={handleRelationshipChange}>
-              <SelectTrigger id="relationship" className="h-11 w-full border-white/[0.1] bg-background/50 px-3">
-                <SelectValue placeholder={t.pairPlaceholder}>
-                  {relationship ? (
-                    <>
-                      <span className="font-mono">{relationship.underlying.symbol}</span>
-                      <ArrowRight className="size-3.5 text-muted-foreground" />
-                      <span className="font-mono">
-                        {relationship.leveraged_product.symbol}
-                      </span>
-                      <span
-                        className={
-                          !relationship.leverage_factor.startsWith("-")
-                            ? "text-primary"
-                            : "text-amber-300"
-                        }
-                      >
-                        {leverageLabel(relationship.leverage_factor)}
-                      </span>
-                    </>
-                  ) : null}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {products?.relationships.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    <span className="font-mono">{item.underlying.symbol}</span>
-                    <ArrowRight className="size-3.5 text-muted-foreground" />
-                    <span className="font-mono">{item.leveraged_product.symbol}</span>
-                    <span className={!item.leverage_factor.startsWith("-") ? "text-primary" : "text-amber-300"}>
-                      {leverageLabel(item.leverage_factor)}
-                    </span>
-                  </SelectItem>
+            <Heart className="size-5 text-primary" aria-hidden="true" />
+          </CardHeader>
+          <CardContent>
+            {watchlist.length ? (
+              <ul className="flex flex-wrap gap-2">
+                {watchlist.map((symbol) => (
+                  <li key={symbol} className="flex rounded-full border border-white/[0.1] bg-background/45">
+                    <button
+                      type="button"
+                      onClick={() => void selectSymbol(symbol)}
+                      className="px-3 py-2 font-mono text-sm hover:text-primary"
+                    >
+                      {symbol}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWatchlist((current) => removeWatchlistSymbol(current, symbol))
+                      }
+                      className="border-l border-white/[0.08] px-2 text-muted-foreground hover:text-rose-300"
+                      aria-label={interpolate(t.removeWatchlist, { symbol })}
+                    >
+                      <Trash2 className="size-3.5" aria-hidden="true" />
+                    </button>
+                  </li>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
+              </ul>
+            ) : (
+              <p className="text-sm leading-6 text-muted-foreground">{t.watchlistEmpty}</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
-          {anchor && relationship ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  {
-                    label: t.underlyingClose,
-                    symbol: anchor.underlying.symbol,
-                    price: anchor.underlying.close,
-                  },
-                  {
-                    label: interpolate(t.etfClose, {
-                      leverage: leverageLabel(relationship.leverage_factor),
-                    }),
-                    symbol: anchor.leveraged_product.symbol,
-                    price: anchor.leveraged_product.close,
-                  },
-                ].map((item) => item.price !== null && (
-                  <div key={item.symbol} className="rounded-xl border border-white/[0.08] bg-background/45 p-4">
-                    <p className="data-label">{item.label}</p>
-                    <div className="mt-3 flex items-end justify-between gap-3">
-                      <span className="font-mono text-sm text-muted-foreground">{item.symbol}</span>
-                      <span className="font-mono text-2xl tracking-tight">
-                        {formatMoney(item.price, locale)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
-                <span className="inline-flex items-center gap-2">
-                  <CalendarClock className="size-4 text-primary" aria-hidden="true" />
-                  {interpolate(t.tradingDate, { date: anchor.trading_date })}
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <Database className="size-4 text-primary" aria-hidden="true" />
-                  {interpolate(t.provider, { provider: anchor.provider })}
-                </span>
-              </div>
-
-              <Separator />
-
-              <form onSubmit={handleSubmit} className="space-y-5">
-                <div className="space-y-2">
-                  <span className="text-sm font-medium">{t.calculateFrom}</span>
-                  <Tabs
-                    value={inputSide}
-                    onValueChange={handleInputSideChange}
-                  >
-                    <TabsList className="h-10 w-full bg-background/55 p-1">
-                      <TabsTrigger value="underlying" className="h-full px-3">
-                        {interpolate(t.targetTab, {
-                          symbol: relationship.underlying.symbol,
-                        })}
-                      </TabsTrigger>
-                      <TabsTrigger value="leveraged_product" className="h-full px-3">
-                        {interpolate(t.targetTab, {
-                          symbol: relationship.leveraged_product.symbol,
-                        })}
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
+      {isLoading && !workspace ? (
+        <Skeleton className="h-[38rem] rounded-2xl" />
+      ) : workspace ? (
+        <Card className="surface-glow border-white/[0.08] bg-card/85">
+          <CardHeader className="border-b border-white/[0.07]">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-3">
+                  <CardTitle className="font-mono text-3xl">{workspace.underlying.symbol}</CardTitle>
+                  <Badge variant="outline">{workspace.rows.length} ETFs</Badge>
                 </div>
+                <CardDescription className="mt-2">{workspace.underlying.name}</CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant={isWatched ? "outline" : "default"}
+                onClick={() =>
+                  isWatched
+                    ? setWatchlist((current) =>
+                        removeWatchlistSymbol(current, workspace.underlying.symbol),
+                      )
+                    : addSelected()
+                }
+              >
+                {isWatched ? <Trash2 className="size-4" /> : <Plus className="size-4" />}
+                {isWatched ? t.remove : t.add}
+              </Button>
+            </div>
+            {firstAnchor ? (
+              <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
+                <span className="inline-flex items-center gap-2">
+                  <Database className="size-4 text-primary" />
+                  {t.latestClose}: <strong className="font-mono text-foreground">{formatMoney(firstAnchor.underlying.close ?? "", locale)}</strong>
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <CalendarClock className="size-4 text-primary" />
+                  {interpolate(t.anchorDate, { date: firstAnchor.trading_date })}
+                </span>
+              </div>
+            ) : null}
+          </CardHeader>
+          <CardContent className="space-y-6 pt-6">
+            <Tabs
+              value={mode}
+              onValueChange={(value) => {
+                setMode(value as CalculatorMode);
+                setForwardResult(null);
+                setReverseResult(null);
+              }}
+            >
+              <TabsList className="h-10 w-full max-w-lg bg-background/55 p-1">
+                <TabsTrigger value="forward" className="h-full px-4">
+                  {t.forwardMode}
+                </TabsTrigger>
+                <TabsTrigger value="reverse" className="h-full px-4">
+                  {t.reverseMode}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
 
-                <div className="space-y-2">
-                  <label htmlFor="target-price" className="text-sm font-medium">
-                    {interpolate(t.targetPrice, {
-                      symbol:
-                        inputSide === "underlying"
-                          ? relationship.underlying.symbol
-                          : relationship.leveraged_product.symbol,
-                    })}
+            {mode === "forward" ? (
+              <div className="space-y-5">
+                <div className="max-w-md space-y-2">
+                  <label htmlFor="underlying-target" className="text-sm font-medium">
+                    {interpolate(t.targetPrice, { symbol: workspace.underlying.symbol })}
                   </label>
                   <div className="relative">
-                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-mono text-muted-foreground">
-                      $
-                    </span>
+                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-mono text-muted-foreground">$</span>
                     <Input
-                      id="target-price"
-                      name="target-price"
+                      id="underlying-target"
                       inputMode="decimal"
-                      value={targetPrice}
-                      onChange={(event) => setTargetPrice(event.target.value)}
+                      value={forwardTarget}
+                      onChange={(event) => {
+                        setForwardTarget(event.target.value);
+                        setForwardResult(null);
+                      }}
                       className="h-12 border-white/[0.1] bg-background/55 pl-7 font-mono text-lg"
-                      aria-describedby="target-help"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t.autoCalculate}</p>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-3">
+                  {productRows.map((row) => (
+                    <div
+                      key={row.relationshipId}
+                      className="rounded-xl border border-white/[0.08] bg-background/45 p-4"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-lg font-medium">{row.symbol}</span>
+                        <Badge
+                          variant="outline"
+                          className={row.inverse ? "border-amber-300/25 text-amber-200" : "border-primary/25 text-primary"}
+                        >
+                          {leverageLabel(row.leverageFactor)}
+                        </Badge>
+                      </div>
+                      {row.status === "AVAILABLE" ? (
+                        <>
+                          <p className="mt-4 text-xs text-muted-foreground">
+                            {t.close}: <span className="font-mono text-foreground">{row.close ? formatMoney(row.close, locale) : "—"}</span>
+                          </p>
+                          <p className="mt-2 data-label">{t.theoreticalTarget}</p>
+                          <p className="mt-1 font-mono text-2xl text-primary">
+                            {row.theoreticalTarget
+                              ? formatMoney(row.theoreticalTarget, locale)
+                              : isCalculating
+                                ? t.calculating
+                                : "—"}
+                          </p>
+                        </>
+                      ) : (
+                        <div className="mt-4 rounded-lg border border-amber-300/15 bg-amber-300/[0.045] px-3 py-4 text-sm text-amber-100">
+                          {t.unavailable}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={submitReverse} className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label htmlFor="reverse-product" className="text-sm font-medium">{t.reverseProduct}</label>
+                    <Select value={reverseRelationshipId} onValueChange={changeReverseRelationship}>
+                      <SelectTrigger id="reverse-product" className="h-11 w-full border-white/[0.1] bg-background/55 px-3">
+                        <SelectValue placeholder={t.pairPlaceholder} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {workspace.rows.map((row) => (
+                          <SelectItem key={row.relationship.id} value={row.relationship.id} disabled={row.status !== "AVAILABLE"}>
+                            <span className="font-mono">{row.relationship.leveraged_product.symbol}</span>
+                            <span>{leverageLabel(row.relationship.leverage_factor)}</span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="reverse-target" className="text-sm font-medium">
+                      {interpolate(t.targetPrice, {
+                        symbol: selectedReverseRow?.relationship.leveraged_product.symbol ?? "ETF",
+                      })}
+                    </label>
+                    <Input
+                      id="reverse-target"
+                      inputMode="decimal"
+                      value={reverseTarget}
+                      onChange={(event) => setReverseTarget(event.target.value)}
+                      className="h-12 border-white/[0.1] bg-background/55 font-mono text-lg"
                       required
                     />
                   </div>
-                  <p id="target-help" className="text-sm leading-6 text-muted-foreground">
-                    {interpolate(t.anchorHelp, { version: anchor.version })}
-                  </p>
+                  <Button type="submit" disabled={!selectedReverseRow?.anchor || isCalculating}>
+                    <ArrowDownUp className="size-4" />
+                    {isCalculating ? t.calculating : t.calculate}
+                  </Button>
                 </div>
-
-                <Button type="submit" size="lg" className="h-11 w-full" disabled={isCalculating}>
-                  <ArrowDownUp className="size-4" aria-hidden="true" />
-                  {isCalculating ? t.calculating : t.calculate}
-                </Button>
+                <div className="grid min-h-56 place-items-center rounded-2xl border border-primary/20 bg-primary/[0.055] p-6 text-center">
+                  {reverseResult ? (
+                    <div>
+                      <p className="data-label">{t.impliedUnderlying}</p>
+                      <p className="mt-3 font-mono text-lg text-primary">{reverseResult.output.symbol}</p>
+                      <p className="mt-1 font-mono text-4xl font-medium tracking-[-0.05em]">
+                        {formatMoney(reverseResult.output.theoretical_target_price, locale)}
+                      </p>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {formatPercent(reverseResult.underlying_return, locale)}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <EqualApproximately className="mx-auto size-8 text-primary/60" />
+                      <p className="mt-3 text-sm text-muted-foreground">{t.reverseReady}</p>
+                    </div>
+                  )}
+                </div>
               </form>
-            </>
-          ) : (
-            <Skeleton className="h-80 rounded-xl" />
-          )}
+            )}
 
-          {error ? (
-            <div role="alert" className="flex gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-4 text-sm leading-6 text-amber-100">
-              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-300" aria-hidden="true" />
-              {error}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+            <p className="text-sm leading-6 text-muted-foreground">{t.singleDayWarning}</p>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card className="surface-glow border-white/[0.08] bg-card/85">
-        <CardHeader className="border-b border-white/[0.07]">
-          <CardDescription className="data-label mb-2">{t.output}</CardDescription>
-          <CardTitle className="text-2xl">{t.resultTitle}</CardTitle>
+      {error ? (
+        <div role="alert" className="flex flex-col gap-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-4 text-sm leading-6 text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+          <span className="flex gap-3">
+            <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-300" />
+            {error}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void selectSymbol(workspace?.underlying.symbol ?? "QQQ")}
+          >
+            {t.retry}
+          </Button>
+        </div>
+      ) : null}
+
+      <Card className="surface-glow border-white/[0.08] bg-card/75">
+        <CardHeader>
+          <CardDescription className="data-label">{t.popularEyebrow}</CardDescription>
+          <CardTitle>{t.popularTitle}</CardTitle>
+          <CardDescription>{t.popularDescription}</CardDescription>
         </CardHeader>
-        <CardContent className="flex min-h-[28rem] flex-col pt-6">
-          {result ? (
-            <div className="flex h-full flex-1 flex-col">
-              <div className="rounded-2xl border border-primary/20 bg-primary/[0.055] p-5 sm:p-6">
-                <div className="flex items-center justify-between gap-4">
-                  <p className="data-label">{t.estimatedTarget}</p>
-                  <Badge className="bg-primary/10 text-primary hover:bg-primary/10">
-                    {interpolate(t.dailyLeverage, {
-                      leverage: leverageLabel(result.leverage_factor),
-                    })}
-                  </Badge>
-                </div>
-                <div className="mt-6 flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <p className="font-mono text-lg text-primary">{result.output.symbol}</p>
-                    <p className="mt-1 font-mono text-4xl font-medium tracking-[-0.06em] sm:text-5xl">
-                      {formatMoney(result.output.theoretical_target_price, locale)}
-                    </p>
-                  </div>
-                  <EqualApproximately className="size-8 text-primary/60" aria-hidden="true" />
-                </div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-white/[0.08] bg-background/45 p-4">
-                  <p className="data-label">{t.underlyingMove}</p>
-                  <p className={`mt-2 font-mono text-xl ${result.underlying_return.startsWith("-") ? "text-rose-300" : "text-primary"}`}>
-                    {formatPercent(result.underlying_return, locale)}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-white/[0.08] bg-background/45 p-4">
-                  <p className="data-label">{t.leveragedMove}</p>
-                  <p className={`mt-2 font-mono text-xl ${result.leveraged_return.startsWith("-") ? "text-rose-300" : "text-primary"}`}>
-                    {formatPercent(result.leveraged_return, locale)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-auto pt-6">
-                <p className="text-sm leading-6 text-muted-foreground">
-                  {t.singleDayWarning}
-                </p>
-                <p className="mt-3 font-mono text-xs text-muted-foreground">
-                  {result.formula_version} · {result.anchor.id}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid flex-1 place-items-center rounded-2xl border border-dashed border-white/[0.1] bg-background/25 p-8 text-center">
-              <div className="max-w-sm">
-                <span className="mx-auto grid size-12 place-items-center rounded-full border border-white/[0.1] bg-white/[0.035] text-muted-foreground">
-                  <EqualApproximately className="size-5" aria-hidden="true" />
-                </span>
-                <h3 className="mt-4 font-medium">{t.readyTitle}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {t.readyDescription}
-                </p>
-              </div>
-            </div>
-          )}
+        <CardContent>
+          <PopularUniverse
+            dataset={popular}
+            error={popularError}
+            watchlist={watchlist}
+            onSelect={(row) => void selectSymbol(row.symbol)}
+            onAdd={(symbol) =>
+              setWatchlist((current) => addWatchlistSymbol(current, symbol))
+            }
+            onRetry={() => void loadPopular()}
+          />
         </CardContent>
       </Card>
     </div>
