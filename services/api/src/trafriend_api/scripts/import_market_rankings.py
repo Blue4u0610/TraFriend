@@ -32,7 +32,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--period-status",
         required=True,
-        choices=("SEPTEMBER_TO_DATE", "FINAL"),
+        choices=("SEPTEMBER_TO_DATE", "MONTH_TO_DATE", "FINAL"),
     )
     parser.add_argument("--source", required=True)
     parser.add_argument(

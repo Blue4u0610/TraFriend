@@ -21,6 +21,10 @@ DATES = tuple(date(2026, 9, day) for day in (1, 2, 3, 4))
 
 
 class FakeCalendar(RankingSessionCalendar):
+    def trading_dates_in_month(self, year: int, month: int) -> Sequence[date]:
+        assert (year, month) == (2026, 9)
+        return DATES + (date(2026, 9, 8),)
+
     def completed_trading_dates_in_month(
         self, timestamp: datetime, year: int, month: int
     ) -> Sequence[date]:
@@ -102,6 +106,7 @@ def test_ranking_build_aggregates_vwap_times_volume_and_replaces_idempotently() 
     assert first.complete_assets == 104
     assert first.incomplete_assets == 1
     assert first.persisted_rows == 100
+    assert first.rows[0].period_status.value == "SEPTEMBER_TO_DATE"
     assert first.rows[0].symbol == "C000"
     assert first.rows[0].trading_metric == Decimal("400000")
     assert first.rows[0].sessions_observed == 4

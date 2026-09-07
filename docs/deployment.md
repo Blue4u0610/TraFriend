@@ -1,0 +1,201 @@
+# Production Deployment Preparation
+
+This runbook prepares a dashboard-driven deployment with Vercel for `apps/web`,
+Render for `services/api`, Render PostgreSQL, and an external Render Cron Job. It
+does not create cloud resources. Use placeholder domains below until the real domain
+is connected.
+
+## Before public launch
+
+Technical deployment is ready for private/development use. Alpaca credentials permit
+API access but do not by themselves prove public market-data redistribution rights.
+Confirm the required display and redistribution license in writing before publicly
+serving Alpaca-derived closes or rankings. This licensing task does not require
+changing the deployment architecture.
+
+## 1. Push the reviewed repository
+
+Push only reviewed source commits to the Git provider connected to Vercel and Render.
+Never commit `.env`, credentials, `.idea`, `.venv`, `node_modules`, or `.next`.
+
+## 2. Create Render PostgreSQL
+
+Create a PostgreSQL database in the same Render region as the API and Cron Job. Use
+Render's internal database URL for those services. TraFriend accepts the common
+`postgresql://` Render URL and selects the installed psycopg 3 driver internally; it
+also accepts explicit `postgresql+psycopg://`. Do not expose PostgreSQL through a
+custom public domain.
+
+## 3. Configure the Render backend environment
+
+Create a Render Web Service with root directory `services/api` and set:
+
+```text
+DATABASE_URL=<Render internal PostgreSQL URL>
+ALPACA_API_KEY=<backend secret>
+ALPACA_SECRET_KEY=<backend secret>
+TRAFRIEND_ENV=production
+TRAFRIEND_CORS_ORIGINS=https://trafriend.com,https://www.trafriend.com
+TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca
+TRAFRIEND_ALPACA_DAILY_BARS_FEED=sip
+TRAFRIEND_ALPACA_DAILY_BARS_QUALITY=DELAYED
+```
+
+Replace the example frontend origins with the actual Vercel/custom origins. Do not
+use `*`. Render supplies `PORT`; do not create a fixed production port secret.
+
+## 4. Install and migrate
+
+Use this Render build command, derived from `services/api/pyproject.toml`:
+
+```bash
+pip install .
+```
+
+From a Render Shell or one-off job in `services/api`, apply the complete migration
+chain:
+
+```bash
+alembic upgrade head
+```
+
+Migrations use `DATABASE_URL`; no host, role, password, or database name is hardcoded.
+
+## 5. Bootstrap provider-independent metadata
+
+Run the idempotent bootstrap after migrations:
+
+```bash
+python -m trafriend_api.scripts.bootstrap_production
+```
+
+The command safely reapplies `alembic upgrade head`, verifies the current revision,
+required tables, and the curated `underlyings` and `leveraged_products` rows. Those
+verified rows are migration-owned, so bootstrap never fabricates rankings or prices.
+Running it twice is safe.
+
+## 6. Initialize rankings and Daily Close Anchors
+
+First calculate the provider-derived ranking for the month containing the latest
+completed exchange session:
+
+```bash
+python -m trafriend_api.scripts.calculate_mtd_rankings
+```
+
+Then capture latest completed regular-session anchors for every supported underlying
+in that ranking:
+
+```bash
+python -m trafriend_api.scripts.capture_popular_daily_closes --provider alpaca
+```
+
+Both commands are idempotent. Ranking data is atomically replaced from verified
+source bars. Identical anchors return `EXISTING`; conflicting immutable values are
+not overwritten. Neither command falls back to an older market session.
+
+## 7. Deploy Render FastAPI
+
+Use:
+
+- Root Directory: `services/api`
+- Build Command: `pip install .`
+- Start Command: `uvicorn trafriend_api.main:app --host 0.0.0.0 --port $PORT`
+- Health Check Path: `/health`
+
+The start command deliberately omits `--reload`. `/health` reports process health and
+does not expose database or credential details. Use the validation command below for
+database readiness.
+
+Verify the Render URL returns HTTP 200:
+
+```bash
+curl --fail --show-error https://your-render-service.example/health
+```
+
+## 8. Deploy the Vercel frontend
+
+Create a Vercel project with:
+
+- Root Directory: `apps/web`
+- Framework Preset: Next.js
+- Install Command: `npm install` (Vercel's detected default)
+- Build Command: `npm run build`
+- Environment Variable:
+
+```text
+NEXT_PUBLIC_API_BASE_URL=https://api.trafriend.com
+```
+
+Set this variable before building because `NEXT_PUBLIC_*` values are embedded in the
+browser bundle. It is the only frontend API setting and is public by design. Never
+place `DATABASE_URL` or Alpaca credentials in Vercel. Production rejects a missing
+API URL and rejects an `http://` API URL.
+
+## 9. Configure custom domains and HTTPS
+
+The intended layout is:
+
+```text
+trafriend.com      -> Vercel frontend
+www.trafriend.com  -> Vercel redirect or frontend alias
+api.trafriend.com  -> Render FastAPI
+```
+
+Use the DNS records currently shown by the Vercel and Render dashboards at the domain
+registrar; platform record targets can change, so none are hardcoded here. Both
+platforms terminate HTTPS. After the API domain works, set Vercel's
+`NEXT_PUBLIC_API_BASE_URL` to its `https://` URL, redeploy the frontend, and set exact
+frontend origins in `TRAFRIEND_CORS_ORIGINS`.
+
+## 10. Configure Render Cron
+
+Create a separate Render Cron Job using the same repository, region, and backend
+secret environment:
+
+- Root Directory: `services/api`
+- Build Command: `pip install .`
+- Run Command: `python -m trafriend_api.scripts.run_daily_market_update`
+- Example schedule: `30 23 * * 1-5` (Render cron schedules use UTC)
+
+The late UTC wake-up is intentionally conservative across U.S. daylight-saving
+changes. The command—not the cron expression—asks the NYSE calendar for the latest
+completed session, including holidays and early closes. A weekend, holiday, or
+second run with current ranking and anchors reports `SKIPPED` and exits zero. Missing
+or delayed provider data reports `PARTIAL_RETRYABLE` and exits 2 without substituting
+an older session; retry the same idempotent command after the provider publishes.
+FastAPI contains no scheduler or infinite loop.
+
+## 11. Validate the deployment
+
+From the Render backend shell, run the non-destructive checker without displaying
+secret values:
+
+```bash
+python -m trafriend_api.scripts.validate_deployment \
+  --api-url https://api.trafriend.com
+```
+
+It reports only SET/MISSING credential state, database connectivity, migration/table
+state, row counts, latest expected/available anchor dates, and `/health` status.
+
+## 12. End-to-end checklist
+
+1. Push the reviewed Git repository.
+2. Create Render PostgreSQL.
+3. Configure backend environment variables and secrets.
+4. Run `alembic upgrade head`.
+5. Run `python -m trafriend_api.scripts.bootstrap_production` twice and confirm both succeed.
+6. Initialize MTD ranking and latest anchors with the commands above.
+7. Deploy Render FastAPI without `--reload`.
+8. Confirm `/health` returns HTTP 200.
+9. Deploy `apps/web` on Vercel with the production API URL.
+10. Verify Search, Popular, Watchlist, forward calculation, and reverse calculation.
+11. Add the frontend domains in Vercel and at the registrar.
+12. Add the API domain in Render and at the registrar.
+13. Update exact production CORS origins and restart the API.
+14. Create the external Render Cron Job.
+15. Run the deployment validator and an end-to-end calculator read.
+16. Inspect the next scheduled update result; retry only if it reports `PARTIAL_RETRYABLE`.
+
+Normal calculator reads continue to use PostgreSQL only. Alpaca remains capture-only.

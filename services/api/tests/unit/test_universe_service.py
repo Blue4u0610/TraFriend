@@ -204,6 +204,17 @@ def test_empty_september_dataset_becomes_final_only_after_month_end() -> None:
     assert finalized.population_status.value == "NOT_POPULATED"
 
 
+def test_empty_current_non_september_dataset_is_month_to_date() -> None:
+    dataset = _service(
+        rankings=InMemoryMarketRankingRepository(
+            today=lambda: date(2026, 10, 15)
+        )
+    ).popular(ranking_period="2026-10")
+
+    assert dataset.period_status == RankingPeriodStatus.MONTH_TO_DATE
+    assert dataset.population_status.value == "NOT_POPULATED"
+
+
 def test_popular_capture_expands_ranked_underlying_to_every_product() -> None:
     provider = MockMarketDataProvider(now=lambda: NOW)
     row = MarketRanking(

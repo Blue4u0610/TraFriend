@@ -312,7 +312,7 @@ price.
 GET /api/v1/popular?ranking_period=2026-09&limit=100
 ```
 
-Response fields include `ranking_period`, `period_status`, `ranking_type`, `population_status`, and `rows`. `period_status` distinguishes `SEPTEMBER_TO_DATE` from `FINAL`; `population_status` distinguishes `NOT_POPULATED`, `PARTIAL`, and `COMPLETE`. Each row includes rank, symbol, display name, aggregated dollar volume, source, calculation time, completeness state, observed/expected session counts, and supported leveraged-product count. An empty verified dataset returns `NOT_POPULATED` with no invented rows.
+Response fields include `ranking_period`, `period_status`, `ranking_type`, `population_status`, and `rows`. `period_status` is `SEPTEMBER_TO_DATE` for the original incomplete September 2026 product dataset, `MONTH_TO_DATE` for another incomplete calendar month, or `FINAL` after every session in the month is complete. `population_status` distinguishes `NOT_POPULATED`, `PARTIAL`, and `COMPLETE`. Each row includes rank, symbol, display name, aggregated dollar volume, source, calculation time, completeness state, observed/expected session counts, and supported leveraged-product count. An empty verified dataset returns `NOT_POPULATED` with no invented rows.
 
 ### 4.2 Get an instrument
 

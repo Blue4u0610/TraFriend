@@ -7,6 +7,7 @@ from typing import Optional
 from alembic import context
 from sqlalchemy import Connection, engine_from_config, pool
 
+from trafriend_api.infrastructure.persistence.database import normalize_database_url
 from trafriend_api.infrastructure.persistence.models import Base
 
 config = context.config
@@ -20,9 +21,10 @@ def _database_url() -> str:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is required for Alembic migrations")
-    if not database_url.startswith("postgresql+psycopg://"):
-        raise RuntimeError("DATABASE_URL must use the postgresql+psycopg driver")
-    return database_url
+    try:
+        return normalize_database_url(database_url)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def run_migrations_offline() -> None:

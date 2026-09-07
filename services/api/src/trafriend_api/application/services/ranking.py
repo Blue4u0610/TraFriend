@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable, Container
 
@@ -59,14 +59,23 @@ class MarketRankingService:
         self._now = now
 
     def build_september_2026(self) -> RankingBuildReport:
+        return self.build_month_to_date(2026, 9)
+
+    def build_month_to_date(self, year: int, month: int) -> RankingBuildReport:
         calculated_at = self._utc_now()
+        ranking_period = f"{year:04d}-{month:02d}"
+        all_trading_dates = tuple(
+            self._calendar.trading_dates_in_month(year=year, month=month)
+        )
         completed_dates = tuple(
             self._calendar.completed_trading_dates_in_month(
-                calculated_at, year=2026, month=9
+                calculated_at, year=year, month=month
             )
         )
         if not completed_dates:
-            raise ValueError("September 2026 has no completed trading sessions yet")
+            raise ValueError(
+                f"{ranking_period} has no completed trading sessions yet"
+            )
 
         excluded_symbols = self._curated_etf_symbols()
         assets = tuple(
@@ -117,12 +126,14 @@ class MarketRankingService:
         )
         period_status = (
             RankingPeriodStatus.FINAL
-            if max(completed_dates) == date(2026, 9, 30)
+            if completed_dates == all_trading_dates
             else RankingPeriodStatus.SEPTEMBER_TO_DATE
+            if ranking_period == "2026-09"
+            else RankingPeriodStatus.MONTH_TO_DATE
         )
         rows = tuple(
             MarketRanking(
-                ranking_period="2026-09",
+                ranking_period=ranking_period,
                 period_start=min(completed_dates),
                 period_end=max(completed_dates),
                 period_status=period_status,
@@ -142,7 +153,7 @@ class MarketRankingService:
         )
         persisted = self._repository.replace_verified_rows(rows)
         return RankingBuildReport(
-            ranking_period="2026-09",
+            ranking_period=ranking_period,
             completed_trading_dates=completed_dates,
             candidate_assets=len(assets),
             complete_assets=len(complete),

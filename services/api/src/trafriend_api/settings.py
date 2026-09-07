@@ -1,7 +1,8 @@
 import os
 from typing import List, Optional
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from trafriend_api.domain.daily_close import DailyCloseQuality
 from trafriend_api.domain.overnight import DataQuality
@@ -24,13 +25,60 @@ class Settings(BaseModel):
     daily_close_provider: str = "mock"
     database_url: Optional[SecretStr] = None
 
+    @field_validator("cors_origins")
+    @classmethod
+    def validate_cors_origins(cls, origins: List[str]) -> List[str]:
+        normalized: List[str] = []
+        for origin in origins:
+            value = origin.strip().rstrip("/")
+            if not value:
+                continue
+            if value == "*":
+                normalized.append(value)
+                continue
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("CORS origins must be absolute HTTP(S) origins")
+            normalized.append(value)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("CORS origins must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_production_configuration(self) -> "Settings":
+        environment = self.environment.strip().lower()
+        if environment == "production":
+            if self.database_url is None:
+                raise ValueError("DATABASE_URL is required in production")
+            if not self.cors_origins:
+                raise ValueError("TRAFRIEND_CORS_ORIGINS is required in production")
+            if "*" in self.cors_origins:
+                raise ValueError("wildcard CORS is not allowed in production")
+            if any(
+                urlsplit(origin).hostname in {"localhost", "127.0.0.1"}
+                for origin in self.cors_origins
+            ):
+                raise ValueError("localhost CORS origins are not allowed in production")
+        return self
+
     @classmethod
     def from_environment(cls) -> "Settings":
-        raw_origins = os.getenv(
-            "TRAFRIEND_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
-        )
+        environment = os.getenv("TRAFRIEND_ENV", "development")
+        raw_origins = os.getenv("TRAFRIEND_CORS_ORIGINS")
+        if raw_origins is None:
+            raw_origins = (
+                ""
+                if environment.strip().lower() == "production"
+                else "http://localhost:3000,http://127.0.0.1:3000"
+            )
         return cls(
-            environment=os.getenv("TRAFRIEND_ENV", "development"),
+            environment=environment,
             cors_origins=[origin.strip() for origin in raw_origins.split(",") if origin.strip()],
             overnight_provider=os.getenv("TRAFRIEND_OVERNIGHT_PROVIDER", "mock"),
             alpaca_key_id=(

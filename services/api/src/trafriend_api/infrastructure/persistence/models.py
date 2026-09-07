@@ -218,7 +218,7 @@ class MarketRankingRecord(Base):
             "trading_metric >= 0", name="ck_market_ranking_metric_nonnegative"
         ),
         CheckConstraint(
-            "period_status IN ('SEPTEMBER_TO_DATE', 'FINAL')",
+            "period_status IN ('SEPTEMBER_TO_DATE', 'MONTH_TO_DATE', 'FINAL')",
             name="ck_market_ranking_period_status",
         ),
         CheckConstraint(

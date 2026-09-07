@@ -17,6 +17,31 @@ def test_health_uses_mock_provider(client: TestClient) -> None:
     assert response.headers["X-Request-ID"].startswith("req_")
 
 
+def test_cors_allows_only_the_configured_origin() -> None:
+    app = create_app(Settings(cors_origins=["https://trafriend.example"]))
+    with TestClient(app) as cors_client:
+        allowed = cors_client.options(
+            "/health",
+            headers={
+                "Origin": "https://trafriend.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        rejected = cors_client.options(
+            "/health",
+            headers={
+                "Origin": "https://untrusted.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == (
+        "https://trafriend.example"
+    )
+    assert "access-control-allow-origin" not in rejected.headers
+
+
 def test_instrument_search_and_relationship_resolution(client: TestClient) -> None:
     search = client.get("/api/v1/instruments/search", params={"query": "TQQQ"})
     assert search.status_code == 200

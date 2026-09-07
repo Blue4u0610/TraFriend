@@ -9,7 +9,10 @@ import {
 } from "./client";
 
 describe("TraFriend API client", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
 
   it("classifies a network failure without exposing browser error details", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
@@ -58,15 +61,16 @@ describe("TraFriend API client", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.test.trafriend.com/");
 
     await searchUnderlyings("Micron MU");
     await searchLeveragedProducts("MUU & MUG");
 
-    expect(fetchMock.mock.calls[0][0]).toContain(
-      "/api/v1/universe/underlyings/search?q=Micron%20MU",
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.test.trafriend.com/api/v1/universe/underlyings/search?q=Micron%20MU&limit=10",
     );
-    expect(fetchMock.mock.calls[1][0]).toContain(
-      "/api/v1/universe/leveraged-products/search?q=MUU%20%26%20MUG",
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://api.test.trafriend.com/api/v1/universe/leveraged-products/search?q=MUU%20%26%20MUG&limit=10",
     );
   });
 });

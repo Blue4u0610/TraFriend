@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 
+from sqlalchemy.exc import SQLAlchemyError
+
+from trafriend_api.infrastructure.calendar import NyseTradingCalendar
 from trafriend_api.presentation.http.dependencies import build_application_services
 from trafriend_api.settings import Settings
+
+UTC = timezone.utc
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -15,7 +21,10 @@ def _parser() -> argparse.ArgumentParser:
             "popular universe or an explicit manual symbol list."
         )
     )
-    parser.add_argument("--period", default="2026-09")
+    parser.add_argument(
+        "--period",
+        help="Ranking period in YYYY-MM; defaults to the latest completed session month.",
+    )
     parser.add_argument(
         "--symbols",
         help="Comma-separated supported underlyings for deterministic/manual runs.",
@@ -38,7 +47,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.symbols:
             report = services.universe.capture_symbols(args.symbols.split(","))
         else:
-            report = services.universe.capture_popular(args.period)
+            period = args.period
+            if period is None:
+                session = NyseTradingCalendar().latest_completed_session(
+                    datetime.now(UTC)
+                )
+                period = session.trading_date.strftime("%Y-%m")
+            report = services.universe.capture_popular(period)
         print(f"Capture Status: {report.status}")
         print(f"Latest Completed Trading Date: {report.trading_date}")
         print(
@@ -60,8 +75,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             print(f"{pair}: {item.status} ({item.message})")
         return 0 if report.status == "VALID" else 2 if report.status == "PARTIAL" else 1
-    except ValueError as exc:
-        print(f"Popular daily-close capture failed: {exc}", file=sys.stderr)
+    except (SQLAlchemyError, ValueError) as exc:
+        print(
+            f"Popular daily-close capture failed: {exc.__class__.__name__}",
+            file=sys.stderr,
+        )
         return 1
 
 

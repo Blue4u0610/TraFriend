@@ -153,7 +153,7 @@ export type PopularRow = {
 
 export type PopularDataset = {
   ranking_period: string;
-  period_status: "SEPTEMBER_TO_DATE" | "FINAL";
+  period_status: "SEPTEMBER_TO_DATE" | "MONTH_TO_DATE" | "FINAL";
   ranking_type: "DOLLAR_TRADING_VOLUME";
   population_status: "COMPLETE" | "PARTIAL" | "NOT_POPULATED";
   rows: PopularRow[];

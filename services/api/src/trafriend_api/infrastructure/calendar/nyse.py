@@ -52,3 +52,11 @@ class NyseTradingCalendar(
             month_start.isoformat(), effective_end.isoformat()
         )
         return tuple(session.date() for session in sessions)
+
+    def trading_dates_in_month(self, year: int, month: int) -> tuple[date, ...]:
+        month_start = date(year, month, 1)
+        month_end = date(year, month, calendar.monthrange(year, month)[1])
+        sessions = self._calendar.sessions_in_range(
+            month_start.isoformat(), month_end.isoformat()
+        )
+        return tuple(session.date() for session in sessions)

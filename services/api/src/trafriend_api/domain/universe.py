@@ -74,6 +74,7 @@ class RankingType(str, Enum):
 
 class RankingPeriodStatus(str, Enum):
     SEPTEMBER_TO_DATE = "SEPTEMBER_TO_DATE"
+    MONTH_TO_DATE = "MONTH_TO_DATE"
     FINAL = "FINAL"
 
 

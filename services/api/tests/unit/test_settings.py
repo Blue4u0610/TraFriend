@@ -1,3 +1,5 @@
+import pytest
+
 from trafriend_api.domain.daily_close import DailyCloseQuality
 from trafriend_api.settings import Settings
 
@@ -66,3 +68,39 @@ def test_database_url_is_secret_and_optional(monkeypatch) -> None:
 
     monkeypatch.delenv("DATABASE_URL")
     assert Settings.from_environment().database_url is None
+
+
+def test_production_requires_database_and_explicit_safe_cors(monkeypatch) -> None:
+    monkeypatch.setenv("TRAFRIEND_ENV", "production")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("TRAFRIEND_CORS_ORIGINS", raising=False)
+
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        Settings.from_environment()
+
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://app:private-password@db.example/trafriend_prod"
+    )
+    monkeypatch.setenv("TRAFRIEND_CORS_ORIGINS", "*")
+    with pytest.raises(ValueError, match="wildcard CORS"):
+        Settings.from_environment()
+
+    monkeypatch.setenv("TRAFRIEND_CORS_ORIGINS", "http://localhost:3000")
+    with pytest.raises(ValueError, match="localhost CORS"):
+        Settings.from_environment()
+
+
+def test_production_accepts_configured_https_origins(monkeypatch) -> None:
+    monkeypatch.setenv("TRAFRIEND_ENV", "production")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://app:secret@db/trafriend_prod")
+    monkeypatch.setenv(
+        "TRAFRIEND_CORS_ORIGINS",
+        "https://trafriend.com/,https://www.trafriend.com",
+    )
+
+    settings = Settings.from_environment()
+
+    assert settings.cors_origins == [
+        "https://trafriend.com",
+        "https://www.trafriend.com",
+    ]

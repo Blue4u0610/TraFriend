@@ -201,7 +201,7 @@ def get_popular(
         data=PopularData(
             ranking_period=dataset.ranking_period,
             period_status=cast(
-                Literal["SEPTEMBER_TO_DATE", "FINAL"],
+                Literal["SEPTEMBER_TO_DATE", "MONTH_TO_DATE", "FINAL"],
                 dataset.period_status.value,
             ),
             ranking_type="DOLLAR_TRADING_VOLUME",

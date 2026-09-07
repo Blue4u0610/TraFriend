@@ -140,7 +140,7 @@ Ranking data is independent from both curated relationships and captured prices.
 |---|---|---|
 | `ranking_period` | text | For example `2026-09` |
 | `period_start`, `period_end` | date | Actual covered interval |
-| `period_status` | text | `SEPTEMBER_TO_DATE` or `FINAL` |
+| `period_status` | text | `SEPTEMBER_TO_DATE`, `MONTH_TO_DATE`, or `FINAL` |
 | `ranking_type` | text | `DOLLAR_TRADING_VOLUME` |
 | `rank` | integer | 1 through 100 |
 | `symbol` | text | Ranked underlying symbol |

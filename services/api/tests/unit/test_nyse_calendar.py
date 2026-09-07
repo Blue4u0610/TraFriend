@@ -65,3 +65,13 @@ def test_completed_month_dates_include_only_sessions_already_closed() -> None:
     )
 
     assert dates == tuple(date(2026, 9, day) for day in (1, 2, 3, 4))
+
+
+def test_full_month_dates_support_final_ranking_detection() -> None:
+    calendar = NyseTradingCalendar()
+
+    dates = calendar.trading_dates_in_month(2026, 9)
+
+    assert dates[0] == date(2026, 9, 1)
+    assert dates[-1] == date(2026, 9, 30)
+    assert date(2026, 9, 7) not in dates

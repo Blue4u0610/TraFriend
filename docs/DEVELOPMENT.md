@@ -5,7 +5,7 @@
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and shadcn/ui.
 - Backend: Python 3.9+, FastAPI, Pydantic 2, Uvicorn, SQLAlchemy 2, Alembic, psycopg 3, and pytest.
 - Data: deterministic in-memory Mock mode when `DATABASE_URL` is absent; PostgreSQL-backed universe metadata, rankings, and Daily Close Anchors when it is set; optional Alpaca REST capture and overnight diagnostics.
-- Not included: Futu/OpenD, deployment-platform scheduler configuration, authentication, or Profit Ratio production data.
+- Not included: Futu/OpenD, an in-process scheduler, authentication, or Profit Ratio production data.
 
 The frontend and backend run as separate applications. Their dependencies and commands are intentionally independent.
 
@@ -37,14 +37,14 @@ python3 -m venv .venv
 Start the API:
 
 ```bash
-.venv/bin/uvicorn trafriend_api.main:app --reload --host 127.0.0.1 --port 8000
+.venv/bin/uvicorn trafriend_api.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
 Useful local URLs:
 
-- Health: `http://127.0.0.1:8000/health`
-- OpenAPI: `http://127.0.0.1:8000/openapi.json`
-- Interactive API docs: `http://127.0.0.1:8000/docs`
+- Health: `http://127.0.0.1:8010/health`
+- OpenAPI: `http://127.0.0.1:8010/openapi.json`
+- Interactive API docs: `http://127.0.0.1:8010/docs`
 
 Without `DATABASE_URL`, the public API keeps deterministic in-memory Mock anchors and needs no market-data account or database. With `DATABASE_URL`, catalog search, ranking reads, and calculator anchors use PostgreSQL. Normal calculations never request Alpaca. A selected-symbol resolve may capture only a missing latest-session pair when `TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca`; the safe default remains `mock`.
 
@@ -117,7 +117,7 @@ with the inherited database and credentials plus the non-secret adapter selectio
 
 ```bash
 TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca \
-.venv/bin/uvicorn trafriend_api.main:app --host 127.0.0.1 --port 8000
+.venv/bin/uvicorn trafriend_api.main:app --host 127.0.0.1 --port 8010
 ```
 
 The default `mock` setting remains credential-free for CI and in-memory development.
@@ -149,19 +149,23 @@ Omit `--symbols` only after a verified popular dataset is populated. The command
 
 An external cron or deployment scheduler may invoke this command after the regular session and retry publication lag. Do not put a loop or sleep in FastAPI and do not hardcode a UTC close time. The command always asks the exchange calendar, which handles DST, weekends, holidays, and early closes.
 
-## September market-ranking calculation
+## Month-to-date market-ranking calculation
 
 The approved first-party metric is `SUM(daily VWAP * daily share volume)` across every completed September 2026 exchange session. The calculation uses Alpaca's active `us_equity` asset list and raw SIP `1Day` bars in batches of at most 200 symbols. A symbol is complete only when one positive VWAP/volume bar exists for every expected session; there is no close-price fallback for missing VWAP.
 
 Run the authenticated, idempotent calculation from `services/api`:
 
 ```bash
-.venv/bin/python -m trafriend_api.scripts.calculate_september_mtd_rankings
+.venv/bin/python -m trafriend_api.scripts.calculate_mtd_rankings
 ```
+
+The command defaults to the month containing the latest completed NYSE session.
+Use `--period 2026-09` for a deliberate historical rebuild. The legacy
+`calculate_september_mtd_rankings` entry point remains an alias for that period.
 
 The exchange calendar determines the completed session dates. The security filter excludes OTC records and metadata/name patterns that explicitly identify ETFs/ETNs, leveraged or inverse funds, warrants, rights, units, preferred shares, and blank-check acquisition companies. Alpaca does not expose a comprehensive security-type field, so ordinary-stock versus every possible non-leveraged ETF distinction cannot be proven perfectly from this interface. The curated ETF/product symbols are always excluded.
 
-The command atomically replaces `2026-09` / `DOLLAR_TRADING_VOLUME`; reruns cannot create duplicate ranks or symbols. The rows remain `SEPTEMBER_TO_DATE` until September is complete.
+The command atomically replaces the selected period / `DOLLAR_TRADING_VOLUME` dataset; reruns cannot create duplicate ranks or symbols. September 2026 remains `SEPTEMBER_TO_DATE` until complete; other incomplete months use `MONTH_TO_DATE`.
 
 ## Market-ranking importer
 
@@ -297,10 +301,10 @@ Open `http://localhost:3000`.
 
 Use the language selector at the top right to switch between English and Simplified Chinese. The selection is saved in the `trafriend_locale` preference cookie. When adding frontend functionality, place every user-facing string—including metadata, accessibility labels, errors, loading/empty states, and disclosures—in both typed dictionaries under `apps/web/src/i18n/`; do not hard-code feature copy in components.
 
-The default API URL is `http://127.0.0.1:8000`. To override it locally, create `apps/web/.env.local` containing only:
+The development fallback API URL is `http://localhost:8010`. To override it locally, create `apps/web/.env.local` containing only:
 
 ```dotenv
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8010
 ```
 
 This variable is public by design because it contains only the TraFriend API origin. Never put a provider credential in a `NEXT_PUBLIC_*` variable.
@@ -337,7 +341,7 @@ Verify API startup:
 
 ```bash
 cd services/api
-.venv/bin/uvicorn trafriend_api.main:app --host 127.0.0.1 --port 8000
+.venv/bin/uvicorn trafriend_api.main:app --host 127.0.0.1 --port 8010
 ```
 
 ## API surface
@@ -370,6 +374,10 @@ Mock close anchors and Profit Ratio points are deterministic. They are deliberat
   `Retry data` action. The QQQ workspace and Popular dataset recover without a full-page
   reload; metadata search reports its own loading, empty, and API-unavailable states.
 - If browser requests are rejected by CORS after changing the frontend port, add the exact local origin to `TRAFRIEND_CORS_ORIGINS` before starting the API.
-- If port 3000 or 8000 is already in use, select another port and update `NEXT_PUBLIC_API_BASE_URL` and the backend CORS origin together.
+- If port 3000 or 8010 is already in use, select another port and update `NEXT_PUBLIC_API_BASE_URL` and the backend CORS origin together.
+
+Production deployment and external Render Cron instructions live in
+[`deployment.md`](deployment.md). FastAPI never starts a scheduler or background
+capture loop.
 - If a language change appears stale during development, confirm cookies are enabled for `localhost` and reload once; clearing the `trafriend_locale` cookie restores English as the default.
 - Delete and recreate only the affected application's generated caches (`apps/web/.next` or `services/api/.pytest_cache`) when diagnosing stale local output; do not remove source or lockfiles.

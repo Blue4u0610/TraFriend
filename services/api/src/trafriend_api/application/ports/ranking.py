@@ -50,6 +50,10 @@ class RankingMarketDataProvider(ABC):
 
 class RankingSessionCalendar(ABC):
     @abstractmethod
+    def trading_dates_in_month(self, year: int, month: int) -> Sequence[date]:
+        raise NotImplementedError
+
+    @abstractmethod
     def completed_trading_dates_in_month(
         self, timestamp: datetime, year: int, month: int
     ) -> Sequence[date]:

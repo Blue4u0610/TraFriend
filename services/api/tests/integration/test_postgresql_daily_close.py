@@ -44,6 +44,7 @@ from trafriend_api.infrastructure.persistence import (
     PostgreSQLDailyCloseAnchorRepository,
     PostgreSQLMarketRankingRepository,
 )
+from trafriend_api.scripts.bootstrap_production import inspect_bootstrap
 
 UTC = timezone.utc
 STAMP = datetime(2026, 9, 4, 21, tzinfo=UTC)
@@ -417,3 +418,15 @@ def test_postgresql_ranking_import_is_separate_and_replaceable(
 
     assert populated.population_status.value == "PARTIAL"
     assert populated.rows == (row,)
+
+
+def test_production_bootstrap_inspection_is_idempotent(
+    postgresql_context: PostgreSQLTestContext,
+) -> None:
+    first = inspect_bootstrap(postgresql_context.engine, "20260907_0006")
+    second = inspect_bootstrap(postgresql_context.engine, "20260907_0006")
+
+    assert first == second
+    assert first.revision == "20260907_0006"
+    assert first.underlyings == 75
+    assert first.leveraged_products == 264

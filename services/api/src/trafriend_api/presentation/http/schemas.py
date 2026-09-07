@@ -203,7 +203,7 @@ class PopularRowSchema(BaseModel):
 
 class PopularData(BaseModel):
     ranking_period: str
-    period_status: Literal["SEPTEMBER_TO_DATE", "FINAL"]
+    period_status: Literal["SEPTEMBER_TO_DATE", "MONTH_TO_DATE", "FINAL"]
     ranking_type: Literal["DOLLAR_TRADING_VOLUME"]
     population_status: Literal["COMPLETE", "PARTIAL", "NOT_POPULATED"]
     rows: List[PopularRowSchema]

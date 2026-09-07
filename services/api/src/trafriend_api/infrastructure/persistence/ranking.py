@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from typing import Callable, Sequence
 
@@ -21,7 +22,17 @@ from trafriend_api.infrastructure.persistence.models import MarketRankingRecord
 def _empty_period_status(ranking_period: str, today: date) -> RankingPeriodStatus:
     if ranking_period == "2026-09" and today <= date(2026, 9, 30):
         return RankingPeriodStatus.SEPTEMBER_TO_DATE
-    return RankingPeriodStatus.FINAL
+    try:
+        year_text, month_text = ranking_period.split("-", 1)
+        year, month = int(year_text), int(month_text)
+        period_end = date(year, month, calendar.monthrange(year, month)[1])
+    except (TypeError, ValueError):
+        return RankingPeriodStatus.MONTH_TO_DATE
+    return (
+        RankingPeriodStatus.FINAL
+        if period_end < today
+        else RankingPeriodStatus.MONTH_TO_DATE
+    )
 
 
 class InMemoryMarketRankingRepository(MarketRankingRepository):
