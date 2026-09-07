@@ -161,6 +161,7 @@ Profit Ratio OHLC/candlestick data is a post-MVP option. It may enter the MVP on
 - On-demand capture retrieves only the latest completed regular-session daily close;
   it never substitutes an intraday, overnight, or previous-session price.
 - One underlying target calculates every available mapped leveraged ETF. Missing child anchors remain visible as `Unavailable` without invalidating siblings.
+- Price inputs initialize with two decimal places. Forward mode provides `-5%`, `-3%`, `-1%`, custom signed percentage, `+1%`, `+3%`, and `+5%` shortcuts; every shortcut derives its target from the displayed latest completed regular-session close and then uses the normal backend calculation path.
 - Reverse mode accepts one leveraged ETF target at a time and calculates its implied underlying target.
 - The browser watchlist stores underlying symbols in `localStorage`; no user account is required.
 - Popular rankings are a separate dataset. The approved September 2026 metric is `SUM(daily VWAP * daily share volume)` across every completed exchange-calendar session. September 2026 is `SEPTEMBER_TO_DATE` until the month is complete.

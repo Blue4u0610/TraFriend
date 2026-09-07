@@ -57,6 +57,7 @@ import {
   saveWatchlist,
 } from "./watchlist";
 import { PopularUniverse } from "./popular-universe";
+import { adjustPriceByPercent, formatPriceInput } from "./price-input";
 import { InstrumentSearch } from "./universe-search";
 import { buildProductViewRows } from "./workspace-model";
 
@@ -147,6 +148,8 @@ export function LeverageCalculator() {
   const [mode, setMode] = useState<CalculatorMode>("forward");
   const [forwardTarget, setForwardTarget] = useState("");
   const [forwardResult, setForwardResult] = useState<MultiCalculation | null>(null);
+  const [customAdjustment, setCustomAdjustment] = useState("");
+  const [activeAdjustment, setActiveAdjustment] = useState<string | null>(null);
   const [reverseRelationshipId, setReverseRelationshipId] = useState("");
   const [reverseTarget, setReverseTarget] = useState("");
   const [reverseResult, setReverseResult] = useState<Calculation | null>(null);
@@ -165,19 +168,23 @@ export function LeverageCalculator() {
       setError(null);
       setForwardResult(null);
       setReverseResult(null);
+      setCustomAdjustment("");
+      setActiveAdjustment(null);
       try {
         const { data } = await resolveUnderlyingWorkspace(symbol);
         setWorkspace(data);
         const available = data.rows.find(
           (row) => row.status === "AVAILABLE" && row.anchor?.underlying.close,
         );
-        setForwardTarget(available?.anchor?.underlying.close ?? "");
+        setForwardTarget(formatPriceInput(available?.anchor?.underlying.close));
         const selectedRow =
           data.rows.find(
             (row) => row.relationship.leveraged_product.symbol === symbol,
           ) ?? data.rows[0];
         setReverseRelationshipId(selectedRow?.relationship.id ?? "");
-        setReverseTarget(selectedRow?.anchor?.leveraged_product.close ?? "");
+        setReverseTarget(
+          formatPriceInput(selectedRow?.anchor?.leveraged_product.close),
+        );
       } catch (requestError) {
         setError(errorMessage(requestError, t));
       } finally {
@@ -251,7 +258,23 @@ export function LeverageCalculator() {
     setReverseRelationshipId(id);
     setReverseResult(null);
     const row = workspace?.rows.find((candidate) => candidate.relationship.id === id);
-    setReverseTarget(row?.anchor?.leveraged_product.close ?? "");
+    setReverseTarget(formatPriceInput(row?.anchor?.leveraged_product.close));
+  }
+
+  function setAdjustedForwardTarget(percent: string, source: string) {
+    if (!firstAnchor?.underlying.close) return;
+    const adjusted = adjustPriceByPercent(firstAnchor.underlying.close, percent);
+    if (!adjusted) return;
+
+    setForwardTarget(adjusted);
+    setForwardResult(null);
+    setActiveAdjustment(source);
+  }
+
+  function changeCustomAdjustment(value: string) {
+    setCustomAdjustment(value);
+    setActiveAdjustment(value.trim() ? "custom" : null);
+    if (value.trim()) setAdjustedForwardTarget(value, "custom");
   }
 
   async function submitReverse(event: FormEvent<HTMLFormElement>) {
@@ -418,24 +441,84 @@ export function LeverageCalculator() {
 
             {mode === "forward" ? (
               <div className="space-y-5">
-                <div className="max-w-md space-y-2">
-                  <label htmlFor="underlying-target" className="text-sm font-medium">
-                    {interpolate(t.targetPrice, { symbol: workspace.underlying.symbol })}
-                  </label>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-mono text-muted-foreground">$</span>
-                    <Input
-                      id="underlying-target"
-                      inputMode="decimal"
-                      value={forwardTarget}
-                      onChange={(event) => {
-                        setForwardTarget(event.target.value);
-                        setForwardResult(null);
-                      }}
-                      className="h-12 border-white/[0.1] bg-background/55 pl-7 font-mono text-lg"
-                    />
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,28rem)_1fr] lg:items-end">
+                  <div className="space-y-2">
+                    <label htmlFor="underlying-target" className="text-sm font-medium">
+                      {interpolate(t.targetPrice, { symbol: workspace.underlying.symbol })}
+                    </label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-mono text-muted-foreground">$</span>
+                      <Input
+                        id="underlying-target"
+                        inputMode="decimal"
+                        value={forwardTarget}
+                        onChange={(event) => {
+                          setForwardTarget(event.target.value);
+                          setForwardResult(null);
+                          setCustomAdjustment("");
+                          setActiveAdjustment(null);
+                        }}
+                        className="h-12 border-white/[0.1] bg-background/55 pl-7 font-mono text-lg"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{t.autoCalculate}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">{t.autoCalculate}</p>
+
+                  <div className="space-y-2">
+                    <span className="text-sm font-medium">{t.quickAdjustment}</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {["-5", "-3", "-1"].map((percent) => (
+                        <Button
+                          key={percent}
+                          type="button"
+                          size="sm"
+                          variant={activeAdjustment === percent ? "default" : "outline"}
+                          disabled={!firstAnchor?.underlying.close}
+                          onClick={() => {
+                            setCustomAdjustment("");
+                            setAdjustedForwardTarget(percent, percent);
+                          }}
+                          aria-label={interpolate(t.adjustByPercent, { percent })}
+                        >
+                          {percent}%
+                        </Button>
+                      ))}
+                      <div className="relative w-28">
+                        <Input
+                          id="custom-price-adjustment"
+                          aria-label={t.customAdjustment}
+                          inputMode="decimal"
+                          value={customAdjustment}
+                          onChange={(event) => changeCustomAdjustment(event.target.value)}
+                          placeholder="±"
+                          disabled={!firstAnchor?.underlying.close}
+                          className={`h-9 border-white/[0.1] bg-background/55 pr-7 text-center font-mono ${
+                            activeAdjustment === "custom" ? "border-primary/60" : ""
+                          }`}
+                        />
+                        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">%</span>
+                      </div>
+                      {["1", "3", "5"].map((percent) => (
+                        <Button
+                          key={percent}
+                          type="button"
+                          size="sm"
+                          variant={activeAdjustment === percent ? "default" : "outline"}
+                          disabled={!firstAnchor?.underlying.close}
+                          onClick={() => {
+                            setCustomAdjustment("");
+                            setAdjustedForwardTarget(percent, percent);
+                          }}
+                          aria-label={interpolate(t.adjustByPercent, {
+                            percent: `+${percent}`,
+                          })}
+                        >
+                          +{percent}%
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{t.quickAdjustmentHint}</p>
+                  </div>
                 </div>
 
                 <div className="grid gap-3 xl:grid-cols-3">
@@ -483,7 +566,10 @@ export function LeverageCalculator() {
                     <label htmlFor="reverse-product" className="text-sm font-medium">{t.reverseProduct}</label>
                     <Select value={reverseRelationshipId} onValueChange={changeReverseRelationship}>
                       <SelectTrigger id="reverse-product" className="h-11 w-full border-white/[0.1] bg-background/55 px-3">
-                        <SelectValue placeholder={t.pairPlaceholder} />
+                        <SelectValue placeholder={t.pairPlaceholder}>
+                          {selectedReverseRow?.relationship.leveraged_product.symbol ??
+                            t.pairPlaceholder}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {workspace.rows.map((row) => (
