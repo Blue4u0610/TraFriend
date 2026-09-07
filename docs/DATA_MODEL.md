@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document defines the logical persistence model for TraFriend. PostgreSQL is planned but is not required for the documentation phase. Names and constraints are design targets to be converted into reviewed migrations when persistence implementation starts.
+This document defines TraFriend's logical persistence model. PostgreSQL persistence is implemented for immutable Daily Close Anchors, the curated leveraged-product universe, and separately sourced market rankings. Profit Ratio and overnight-diagnostic tables remain design targets.
 
 The model prioritizes:
 
@@ -33,44 +33,49 @@ The authoritative API serializes numeric values as decimal strings.
 
 ```mermaid
 erDiagram
-    INSTRUMENTS ||--o{ INSTRUMENT_PROVIDER_MAPPINGS : maps_to
-    INSTRUMENTS ||--o{ LEVERAGED_PRODUCT_RELATIONSHIPS : is_underlying
-    INSTRUMENTS ||--o{ LEVERAGED_PRODUCT_RELATIONSHIPS : is_leveraged_product
-    LEVERAGED_PRODUCT_RELATIONSHIPS ||--o{ DAILY_CLOSE_ANCHORS : anchors
-    DAILY_CLOSE_ANCHORS ||--|{ DAILY_CLOSE_ANCHOR_VALUES : contains
-    INSTRUMENTS ||--o{ DAILY_CLOSE_ANCHOR_VALUES : priced
+    UNDERLYINGS ||--o{ LEVERAGED_PRODUCTS : has
+    LEVERAGED_PRODUCTS ||--o{ DAILY_CLOSE_ANCHORS : relationship_id
+    MARKET_RANKINGS }o--o| UNDERLYINGS : symbol_when_supported
     OVERNIGHT_DIAGNOSTIC_RUNS ||--o{ OVERNIGHT_DIAGNOSTIC_VALUES : contains
     PROFIT_RATIO_METHODOLOGIES ||--o{ PROFIT_RATIO_OBSERVATIONS : defines
     INSTRUMENTS ||--o{ PROFIT_RATIO_OBSERVATIONS : measured_for
     INSTRUMENTS ||--o{ MARKET_PRICE_BARS : priced_in
 ```
 
-## 4. Instrument catalog
+## 4. Leveraged-product universe
 
-### 4.1 `instruments`
+Migration `20260906_0002` creates provider-independent `underlyings` and
+`leveraged_products` tables. Migrations `20260907_0004` and `20260907_0005` expand
+the 2026-09-07 catalog snapshot to 75 underlyings and 264 active daily leveraged
+products. It covers every directly mapped single-stock daily leveraged product found
+for 73 of the current September Top-100 underlyings, plus QQQ and SOXX. Products were
+discovered against the active Alpaca asset catalog and each relationship was checked
+against the official Corgi, Defiance, Direxion, GraniteShares, Leverage Shares,
+ProShares, T-REX, or Tradr issuer catalog. This remains a dated, reproducible coverage
+snapshot rather than a claim that an unmaintained database will stay complete as new
+funds launch. Option-income products, different-index/basket products, and non-daily
+reset products are excluded. Relationships are never inferred from ticker names.
 
-Canonical security identity used throughout TraFriend.
+### 4.1 `underlyings`
+
+Canonical supported underlying identity used throughout the calculator.
 
 | Column | Type | Rules / meaning |
 |---|---|---|
-| `id` | uuid | Primary key |
+| `id` | text | Stable canonical identifier |
 | `symbol` | text | Current canonical display symbol; normalized uppercase |
-| `name` | text | Display name |
-| `instrument_type` | text | `stock`, `etf`, or `leveraged_etf` initially |
+| `display_name` | text | Display name |
+| `instrument_type` | text | `stock` or `etf` |
 | `exchange_mic` | text | Listing MIC |
 | `currency` | char(3) | Quote currency |
-| `status` | text | `active`, `halted`, `delisted`, `unknown` |
-| `price_scale` | smallint nullable | Preferred display decimal places if known |
-| `valid_from` | date nullable | Known listing/effective start |
-| `valid_to` | date nullable | Known end/delisting date |
-| `created_at` | timestamptz | Audit timestamp |
-| `updated_at` | timestamptz | Audit timestamp |
+| `active` | boolean | Whether the underlying is selectable |
+| `profit_ratio_available` | boolean | Independent feature capability |
+| `created_at`, `updated_at` | timestamptz | Mutable catalog audit timestamps |
 
-Suggested indexes and constraints:
+Implemented indexes and constraints:
 
-- Unique current listing key on normalized `(symbol, exchange_mic)` where `valid_to IS NULL`.
-- Trigram or full-text indexes on symbol/name only when search volume justifies them.
-- Check `valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from`.
+- Unique normalized `symbol`.
+- Uppercase-symbol check.
 
 A ticker is not used as a foreign key because symbols can change or be reused.
 
@@ -96,101 +101,113 @@ Constraints:
 - Unique active `(instrument_id, provider_code)` mapping unless a documented provider requires multiple identifiers.
 - Provider keys and metadata must never contain credentials.
 
-### 4.3 `leveraged_product_relationships`
+### 4.3 `leveraged_products`
 
 Curated/evidenced mapping from one leveraged ETF to its underlying and daily target factor.
 
 | Column | Type | Rules / meaning |
 |---|---|---|
-| `id` | uuid | Primary key |
-| `underlying_instrument_id` | uuid | FK to `instruments` |
-| `leveraged_instrument_id` | uuid | FK to `instruments` |
-| `leverage_factor` | numeric(8,4) | Signed and non-zero |
-| `objective_period` | text | `daily` for the MVP |
+| `id` | text | Stable canonical leveraged-product identifier |
+| `relationship_id` | text | Stable relationship identifier used by anchors |
+| `symbol`, `display_name`, `exchange_mic` | text | Product identity and display metadata |
+| `underlying_id` | text | FK to `underlyings` |
+| `signed_leverage` | numeric(8,4) | Verified non-zero daily factor |
+| `issuer` | text | Issuer/manager label |
+| `direction` | text | `LONG` or `INVERSE`, constrained to the factor sign |
+| `active` | boolean | Current catalog availability |
+| `authoritative_source` | text | Issuer or SEC verification URL |
+| `verified_at` | timestamptz | Last verification instant |
 | `effective_from` | date | Inclusive relationship start |
 | `effective_to` | date nullable | Inclusive relationship end |
-| `metadata_source` | text | Curated/source identifier |
-| `methodology_version` | text | Version of relationship interpretation |
+| `objective_period` | text | `daily` for the MVP |
 | `created_at` | timestamptz | Audit timestamp |
 | `updated_at` | timestamptz | Audit timestamp |
 
 Constraints:
 
-- Underlying and leveraged instrument IDs differ.
-- Referenced leveraged instrument has type `leveraged_etf` (enforced in application service or trigger because a simple check cannot inspect another table).
 - `effective_to IS NULL OR effective_to >= effective_from`.
-- Effective ranges for the same leveraged instrument do not overlap. A PostgreSQL exclusion constraint is preferred.
-- A unique active relationship covers `(underlying_instrument_id, leveraged_instrument_id, objective_period)`.
+- Unique `symbol` and unique `relationship_id`.
+- Direction must match the sign of `signed_leverage`.
+- `underlying_id` uses a restrictive foreign key.
 
 The relationship is effective-dated because funds can change objectives, factors, or underlyings. Never edit historical leverage facts in place.
 
+### 4.4 `market_rankings`
+
+Ranking data is independent from both curated relationships and captured prices.
+
+| Column | Type | Rules / meaning |
+|---|---|---|
+| `ranking_period` | text | For example `2026-09` |
+| `period_start`, `period_end` | date | Actual covered interval |
+| `period_status` | text | `SEPTEMBER_TO_DATE` or `FINAL` |
+| `ranking_type` | text | `DOLLAR_TRADING_VOLUME` |
+| `rank` | integer | 1 through 100 |
+| `symbol` | text | Ranked underlying symbol |
+| `display_name`, `exchange` | text | Provider asset metadata used by Popular |
+| `trading_metric` | numeric(30,4) | `SUM(daily VWAP * daily share volume)` |
+| `calculated_at` | timestamptz | Dataset calculation instant |
+| `source` | text | Licensed source attribution |
+| `completeness_status` | text | `COMPLETE` or `INCOMPLETE` |
+| `sessions_observed`, `sessions_expected` | integer | Coverage evidence; selected rows require equality |
+
+Unique constraints prevent duplicate ranks or symbols within a period/type. The first-party builder and alternate importer both atomically replace one coherent period/type dataset. The builder ranks the independently fetched active U.S.-equity universe and never derives candidates from the curated product list.
+
 ## 5. Daily Close Anchor model
 
-These tables are design targets only; PostgreSQL is not implemented in the current round. The in-process implementation uses immutable domain values and an in-memory repository with the same essential semantics.
+Migration `20260906_0001` implements one denormalized, atomic `daily_close_anchors` table. Migration `20260906_0002` adds the catalog without rewriting this validated immutable anchor architecture. Anchors retain captured symbols and signed leverage for reproducibility; the catalog supplies current searchable metadata. The in-memory repository retains the same idempotency and conflict semantics for deterministic tests.
 
 ### 5.1 `daily_close_anchors`
 
-One immutable calculator-anchor attempt for a relationship and expected completed exchange session.
+One immutable, complete calculator anchor for a relationship and expected completed exchange session. Missing, partial, stale, or mismatched-date capture outcomes are returned by the application but are not inserted into this calculator-eligible table.
 
 | Column | Type | Rules / meaning |
 |---|---|---|
 | `id` | uuid | Primary key; exposed as an opaque anchor version ID |
-| `relationship_id` | uuid | FK to `leveraged_product_relationships` |
+| `relationship_id` | text | Stable curated relationship identifier |
+| `underlying_symbol` | text | Uppercase symbol at capture |
+| `leveraged_product_symbol` | text | Uppercase leveraged ETF symbol at capture |
+| `signed_leverage` | numeric(8,4) | Curated finite, non-zero daily factor |
 | `trading_date` | date | Expected latest completed XNYS session |
+| `underlying_trading_date` | date | Must equal `trading_date` |
+| `leveraged_product_trading_date` | date | Must equal `trading_date` |
 | `session_closed_at` | timestamptz | Actual exchange-calendar close instant |
 | `version` | integer | Positive immutable sequence for the relationship |
-| `status` | text | `COMPLETE`, `PARTIAL`, or `UNAVAILABLE` |
-| `provider_code` | text | Safe provider label |
+| `status` | text | Always `COMPLETE` in persisted rows |
+| `underlying_close` | numeric(20,8) | Exact positive Decimal value |
+| `leveraged_product_close` | numeric(20,8) | Exact positive Decimal value |
+| `provider` | text | Safe provider label |
 | `source_feed` | text | Safe feed label |
+| `underlying_market_timestamp` | timestamptz | Provider daily-bar timestamp |
+| `leveraged_product_market_timestamp` | timestamptz | Provider daily-bar timestamp |
+| `underlying_observed_at` | timestamptz | Backend observation instant |
+| `leveraged_product_observed_at` | timestamptz | Backend observation instant |
+| `underlying_quality` | text | Accepted `REALTIME` or `DELAYED` quality |
+| `leveraged_product_quality` | text | Accepted `REALTIME` or `DELAYED` quality |
+| `underlying_currency` | char(3) | `USD` |
+| `leveraged_product_currency` | char(3) | `USD` |
+| `underlying_message` | text | Bounded sanitized validation reason |
+| `leveraged_product_message` | text | Bounded sanitized validation reason |
 | `anchor_type` | text | Always `DAILY_CLOSE_ANCHOR` |
 | `captured_at` | timestamptz | Pair validation/persistence instant |
-| `correction_reason` | text nullable | Required if a newer version replaces a usable one |
 | `created_at` | timestamptz | Audit timestamp |
 
 Constraints:
 
-- Unique `(relationship_id, trading_date, version)` and `version > 0`.
-- An anchor is append-only; corrections create a higher version.
-- Only `COMPLETE` can be selected by the calculator.
+- Unique `(underlying_symbol, leveraged_product_symbol, trading_date)` logical identity.
+- Unique `(relationship_id, trading_date)` and `(relationship_id, version)`; `version > 0`.
+- Prices are positive, signed leverage is non-zero, both member dates equal `trading_date`, and both currencies are `USD`.
+- Rows are append-only. A PostgreSQL trigger rejects `UPDATE` and `DELETE`.
+- Identical recapture ignores retry-only observation/capture timestamps and returns the stored row. A material close, leverage, relationship, market-timestamp, provider, feed, quality, currency, or session conflict raises explicitly.
+- Corrections are intentionally not implemented yet; they require a reviewed higher-version policy and must never mutate the existing row.
 - `session_closed_at <= captured_at`.
 - The trading date is resolved by the exchange calendar, never database `CURRENT_DATE`.
 
-### 5.2 `daily_close_anchor_values`
-
-Exactly two role slots per anchor, including explicit missing or rejected outcomes.
-
-| Column | Type | Rules / meaning |
-|---|---|---|
-| `id` | uuid | Primary key |
-| `anchor_id` | uuid | FK to `daily_close_anchors` |
-| `role` | text | `underlying` or `leveraged_product` |
-| `instrument_id` | uuid | FK to `instruments` |
-| `symbol_at_capture` | text | Auditable display symbol |
-| `close` | numeric(20,8) nullable | Finite and positive when present |
-| `trading_date` | date nullable | Provider bar date |
-| `market_timestamp` | timestamptz nullable | Provider daily-bar timestamp |
-| `observed_at` | timestamptz | Backend observation instant |
-| `source` | text | Safe provider label |
-| `source_feed` | text | Safe feed label |
-| `currency` | char(3) | `USD` for the current U.S. universe |
-| `quality` | text | `REALTIME`, `DELAYED`, `STALE`, or `UNAVAILABLE` |
-| `status` | text | `AVAILABLE`, `REJECTED`, or `MISSING` |
-| `message` | text | Bounded sanitized selection/rejection reason |
-| `created_at` | timestamptz | Audit timestamp |
-
-Constraints:
-
-- Unique `(anchor_id, role)` and `(anchor_id, instrument_id)`.
-- An `AVAILABLE` value has non-null positive close, date, and market timestamp.
-- A `MISSING` value has null close/date/market timestamp and `UNAVAILABLE` quality.
-- A `COMPLETE` parent has exactly two `AVAILABLE` values whose date equals the parent's expected trading date and whose provider/feed matches the parent.
-- A prior-session bar is retained only as a `REJECTED` diagnostic value. It cannot form a fallback anchor.
-
-### 5.3 Separate overnight diagnostic model
+### 5.2 Separate overnight diagnostic model
 
 The following earlier design records `OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` experiments. These entities are **not calculator anchors** and must not be queried by the calculator repository. Their production persistence remains unimplemented.
 
-#### 5.3.1 `reference_capture_runs`
+#### 5.2.1 `reference_capture_runs`
 
 One scheduled or manually authorized attempt window for a session/trading date/provider.
 
@@ -218,7 +235,7 @@ Constraints and indexes:
 
 A run can be `partial` even when some individual reference pairs are valid and active.
 
-#### 5.3.2 `reference_capture_attempts`
+#### 5.2.2 `reference_capture_attempts`
 
 Operational outcome for each relationship considered by a capture run. This stores failures without creating an invalid published reference set.
 
@@ -240,7 +257,7 @@ Operational outcome for each relationship considered by a capture run. This stor
 
 Unique `(capture_run_id, relationship_id, attempt_number)`.
 
-#### 5.3.3 `daily_reference_sets`
+#### 5.2.3 `daily_reference_sets`
 
 Immutable version metadata for a complete underlying/leveraged ETF pair.
 
@@ -270,7 +287,7 @@ Constraints:
 
 Ordinary retries create a set only for a previously failed pair. An operator correction creates a higher immutable version and records why it superseded the prior version.
 
-#### 5.3.4 `daily_reference_prices`
+#### 5.2.4 `daily_reference_prices`
 
 Exactly two normalized price members of a complete reference set.
 
@@ -307,7 +324,7 @@ Constraints:
 - Only `AVAILABLE` rows with `REALTIME` or an explicitly approved delayed policy can be candidates. `STALE` and `UNAVAILABLE` rows are attempt/audit data and cannot activate a pair.
 - A complete set has one reference type, provider, source feed, trading date, and policy version. No fallback can import a previous session's value.
 
-#### 5.3.5 `reference_activation_events`
+#### 5.2.5 `reference_activation_events`
 
 Append-only audit log for activation and supersession.
 
@@ -425,18 +442,18 @@ Rules:
 
 For each valid pair, a transaction should:
 
-1. Acquire a relationship/trading-date-scoped lock or rely on a safe uniqueness retry.
-2. Insert the anchor version and both role values.
-3. Validate membership, exact same date, positivity, provenance, quality, timestamps, and version.
-4. Make the version calculator-eligible only if both values are `AVAILABLE`.
-5. Append correction/audit metadata where applicable.
-6. Commit atomically.
+1. Acquire a symbol-pair/trading-date advisory lock.
+2. Look up the unique logical identity.
+3. Return the row if all material provider facts match, or raise an immutable conflict if they differ.
+4. Insert one complete atomic anchor row with the next relationship version when no identity exists.
+5. Commit atomically.
 
 No reader should calculate from an anchor with one usable price.
 
 ### 8.2 Ingestion idempotency
 
-- Capture runs use unique idempotency keys.
+- Daily Close Anchor capture uses the unique `(underlying_symbol, leveraged_product_symbol, trading_date)` identity.
+- Overnight capture-run design uses separate unique idempotency keys if it is later persisted.
 - Provider records use provider IDs when stable; otherwise use documented natural keys/hashes.
 - Retries return an existing successful outcome or create only the next allowed immutable version.
 - API calculation requests do not write calculation rows in the MVP.
@@ -460,11 +477,11 @@ No reader should calculate from an anchor with one usable price.
 
 ## 11. Migration sequencing
 
-Recommended migration order when PostgreSQL implementation starts:
+Migration status and recommended continuation order:
 
-1. Instrument catalog and provider mappings.
-2. Effective-dated leveraged product relationships.
-3. Immutable Daily Close Anchors/values and correction audit.
+1. **Implemented:** atomic immutable Daily Close Anchors for curated relationship metadata.
+2. Instrument catalog, provider mappings, and effective-dated leveraged-product relationships when those are moved out of curated application metadata.
+3. Explicit correction/audit workflow after its product policy is approved.
 4. Profit Ratio methodologies and observations.
 5. Market price bars.
 6. Performance indexes/materialized views only after query measurement.
@@ -474,8 +491,8 @@ Each migration requires repository integration tests for constraints and rollbac
 ## 12. Data-model decisions still required
 
 - Confirm numeric precision/scale from chosen providers and maximum supported prices.
-- Decide whether corrected provider observations append revisions or supersede through a separate revision link.
-- Choose exact complete-anchor selection enforcement (deferred trigger versus transaction plus constraints).
+- Decide how corrected provider observations append higher versions and link to superseded rows.
+- Decide whether incomplete capture attempts need a separate operational audit table.
 - Confirm instrument-symbol history requirements and corporate-action source.
 - Approve Profit Ratio methodology and whether provider licensing permits historical storage.
 - Set retention periods for attempts, raw metadata, price bars, and analytics observations.

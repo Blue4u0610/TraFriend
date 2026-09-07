@@ -10,7 +10,7 @@ Public API base path:
 /api/v1
 ```
 
-The API is read-oriented. Calculation `POST` requests are side-effect free and are not persisted as user history in the MVP. Daily-close capture and provider ingestion are backend responsibilities, not public endpoints. This phase exposes only local manual validation CLIs; it does not add an unauthenticated development or administration route.
+The API is read-oriented. Calculation `POST` requests are side-effect free and are not persisted as user history in the MVP. The user-facing symbol-resolution `POST` may idempotently capture a missing latest-session anchor after checking PostgreSQL; it is not a general administration endpoint. Bulk daily-close capture and ranking import remain backend commands.
 
 The calculator exposes `DAILY_CLOSE_ANCHOR` only. `OVERNIGHT_OPEN` and `OVERNIGHT_SNAPSHOT` remain distinct internal diagnostic types and are not accepted by calculator routes.
 
@@ -202,6 +202,8 @@ Inverse products use a negative factor such as `"-3"`.
   "captured_at": "2026-09-08T20:02:00Z",
   "provider": "mock",
   "source_feed": "mock-regular-close",
+  "signed_leverage": "2",
+  "created_at": "2026-09-08T20:02:00Z",
   "anchor_type": "DAILY_CLOSE_ANCHOR"
 }
 ```
@@ -265,6 +267,53 @@ Response `200`:
 
 Search reads the normalized instrument catalog. It does not expose arbitrary provider search payloads.
 
+### 4.4 Search the provider-independent universe
+
+```http
+GET /api/v1/universe/search?q=QQQ&limit=10
+GET /api/v1/universe/underlyings/search?q=MU&limit=10
+GET /api/v1/universe/leveraged-products/search?q=MUZ&limit=10
+```
+
+All three routes search PostgreSQL/in-memory universe metadata only and never call
+Alpaca or another market-data provider. The first route is retained as a combined
+compatibility search. The UI uses the two scoped routes so an underlying result is
+never confused with a leveraged-product result. Selecting a leveraged product still
+resolves to its canonical underlying and complete active relationship set.
+
+### 4.5 Get an underlying workspace without capture
+
+```http
+GET /api/v1/underlyings/QQQ
+GET /api/v1/underlyings/QQQ/leveraged-products
+```
+
+Both routes resolve a leveraged symbol back to its canonical underlying and return every active relationship. Each row has `status`, `anchor_source` (`CACHE` or `NONE`), and an optional latest-session Daily Close Anchor. No provider call occurs.
+
+### 4.6 Resolve a selected symbol with on-demand caching
+
+```http
+POST /api/v1/underlyings/QQQ/resolve
+```
+
+The application checks PostgreSQL first for every QQQ relationship. Missing
+latest-session pairs are captured through the configured
+`DailyCloseMarketDataProvider`, validated, and persisted. A complete row reports
+`CACHE` or `ON_DEMAND`; a missing child reports `UNAVAILABLE`. Search text entry must
+not call this endpoint—only deliberate symbol selection may do so. With PostgreSQL,
+real capture is enabled only when `TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca`; the safe
+Mock default never writes fabricated anchors into the real database. "On demand"
+means the latest completed regular-session daily close, not an intraday or overnight
+price.
+
+### 4.7 Popular underlyings
+
+```http
+GET /api/v1/popular?ranking_period=2026-09&limit=100
+```
+
+Response fields include `ranking_period`, `period_status`, `ranking_type`, `population_status`, and `rows`. `period_status` distinguishes `SEPTEMBER_TO_DATE` from `FINAL`; `population_status` distinguishes `NOT_POPULATED`, `PARTIAL`, and `COMPLETE`. Each row includes rank, symbol, display name, aggregated dollar volume, source, calculation time, completeness state, observed/expected session counts, and supported leveraged-product count. An empty verified dataset returns `NOT_POPULATED` with no invented rows.
+
 ### 4.2 Get an instrument
 
 ```http
@@ -318,7 +367,7 @@ Response `200`:
         },
         "leverage_factor": "2",
         "objective_period": "daily",
-        "effective_from": "2023-12-04",
+        "effective_from": "2022-12-13",
         "effective_to": null
       }
     ]
@@ -345,7 +394,7 @@ Optional query parameter:
 
 Response `200`: success envelope containing the latest stored Daily Close Anchor representation.
 
-Response `503` with `ANCHOR_UNAVAILABLE` if no anchor has been captured. A non-complete latest attempt is visible but cannot be submitted for calculation. The API must not silently substitute another trading date.
+Response `503` with `ANCHOR_UNAVAILABLE` if no complete anchor has been captured for the calendar-derived latest completed session. Partial/unavailable capture outcomes are not published as calculator anchors, and the API must not silently substitute an older trading date.
 
 ### 5.2 Calculate a theoretical target
 
@@ -426,6 +475,17 @@ Forward response `200`:
 Reverse requests set `input_side` to `leveraged_product`; the response swaps input/output sides and calculates the implied underlying return and target.
 
 The API returns `CALCULATION_OUT_OF_DOMAIN` when the computed price is non-positive. The response may include safe structured context such as the violated boundary but must not return the invalid value as a price result.
+
+### 5.3 Calculate all leveraged products for one underlying
+
+```http
+POST /api/v1/underlyings/QQQ/calculations
+Content-Type: application/json
+
+{"target_price":"733.3392"}
+```
+
+The server loads every active QQQ relationship and its current persisted anchor, then applies the same `leveraged-daily-close-linear/v2` formula independently. The response contains one row per product. Rows without a complete same-date anchor return `status: "UNAVAILABLE"` and null result fields; valid siblings still calculate. This endpoint never captures data and never calls a provider.
 
 ## 6. Profit Ratio endpoints
 

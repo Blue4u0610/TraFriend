@@ -14,12 +14,15 @@ class Settings(BaseModel):
     alpaca_key_id: Optional[SecretStr] = None
     alpaca_secret_key: Optional[SecretStr] = None
     alpaca_data_base_url: str = "https://data.alpaca.markets"
+    alpaca_trading_base_url: str = "https://paper-api.alpaca.markets"
     alpaca_snapshot_feed: str = "overnight"
     alpaca_bars_feed: str = "boats"
     alpaca_snapshot_quality: DataQuality = DataQuality.REALTIME
     alpaca_bars_quality: DataQuality = DataQuality.DELAYED
     alpaca_daily_bars_feed: str = "sip"
     alpaca_daily_bars_quality: DailyCloseQuality = DailyCloseQuality.DELAYED
+    daily_close_provider: str = "mock"
+    database_url: Optional[SecretStr] = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -51,6 +54,10 @@ class Settings(BaseModel):
             alpaca_data_base_url=os.getenv(
                 "TRAFRIEND_ALPACA_DATA_BASE_URL", "https://data.alpaca.markets"
             ),
+            alpaca_trading_base_url=os.getenv(
+                "TRAFRIEND_ALPACA_TRADING_BASE_URL",
+                "https://paper-api.alpaca.markets",
+            ),
             alpaca_snapshot_feed=os.getenv(
                 "TRAFRIEND_ALPACA_SNAPSHOT_FEED", "overnight"
             ),
@@ -68,5 +75,13 @@ class Settings(BaseModel):
                 os.getenv(
                     "TRAFRIEND_ALPACA_DAILY_BARS_QUALITY", "DELAYED"
                 ).upper()
+            ),
+            daily_close_provider=os.getenv(
+                "TRAFRIEND_DAILY_CLOSE_PROVIDER", "mock"
+            ).lower(),
+            database_url=(
+                SecretStr(os.environ["DATABASE_URL"])
+                if os.getenv("DATABASE_URL")
+                else None
             ),
         )

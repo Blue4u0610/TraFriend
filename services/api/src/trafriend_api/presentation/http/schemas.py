@@ -30,6 +30,8 @@ class InstrumentSchema(FromDomainModel):
     currency: str
     status: str
     capabilities: CapabilitiesSchema
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class RelationshipSchema(FromDomainModel):
@@ -40,6 +42,11 @@ class RelationshipSchema(FromDomainModel):
     objective_period: Literal["daily"]
     effective_from: date
     effective_to: Optional[date] = None
+    issuer: Optional[str] = None
+    direction: Optional[Literal["LONG", "INVERSE"]] = None
+    status: str
+    authoritative_source: Optional[str] = None
+    verified_at: Optional[datetime] = None
 
 
 class DailyCloseAnchorValueSchema(FromDomainModel):
@@ -68,6 +75,8 @@ class DailyCloseAnchorSchema(FromDomainModel):
     captured_at: datetime
     provider: str
     source_feed: str
+    signed_leverage: Decimal
+    created_at: datetime
     anchor_type: Literal["DAILY_CLOSE_ANCHOR"]
 
 
@@ -158,6 +167,83 @@ class CalculationData(BaseModel):
 
 class CalculationResponse(BaseModel):
     data: CalculationData
+    meta: ResponseMeta
+
+
+class AnchorResolutionSchema(BaseModel):
+    relationship: RelationshipSchema
+    status: Literal["AVAILABLE", "UNAVAILABLE"]
+    anchor_source: Literal["CACHE", "ON_DEMAND", "NONE"]
+    message: str
+    anchor: Optional[DailyCloseAnchorSchema] = None
+
+
+class UnderlyingWorkspaceData(BaseModel):
+    underlying: InstrumentSchema
+    rows: List[AnchorResolutionSchema]
+
+
+class UnderlyingWorkspaceResponse(BaseModel):
+    data: UnderlyingWorkspaceData
+    meta: ResponseMeta
+
+
+class PopularRowSchema(BaseModel):
+    rank: int
+    symbol: str
+    name: Optional[str] = None
+    trading_metric: Decimal
+    calculated_at: datetime
+    source: str
+    completeness_status: Literal["COMPLETE", "INCOMPLETE"]
+    sessions_observed: int
+    sessions_expected: int
+    supported_leveraged_products: int
+
+
+class PopularData(BaseModel):
+    ranking_period: str
+    period_status: Literal["SEPTEMBER_TO_DATE", "FINAL"]
+    ranking_type: Literal["DOLLAR_TRADING_VOLUME"]
+    population_status: Literal["COMPLETE", "PARTIAL", "NOT_POPULATED"]
+    rows: List[PopularRowSchema]
+
+
+class PopularResponse(BaseModel):
+    data: PopularData
+    meta: ResponseMeta
+
+
+class MultiCalculationRequest(BaseModel):
+    target_price: Decimal
+
+    @field_validator("target_price", mode="before")
+    @classmethod
+    def require_target_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("target_price must be a decimal string")
+        return value
+
+
+class MultiCalculationRowSchema(BaseModel):
+    relationship: RelationshipSchema
+    status: Literal["AVAILABLE", "UNAVAILABLE"]
+    anchor: Optional[DailyCloseAnchorSchema]
+    theoretical_target_price: Optional[Decimal]
+    underlying_return: Optional[Decimal]
+    leveraged_return: Optional[Decimal]
+    message: str
+
+
+class MultiCalculationData(BaseModel):
+    underlying: InstrumentSchema
+    target_price: Decimal
+    rows: List[MultiCalculationRowSchema]
+    formula_version: Literal["leveraged-daily-close-linear/v2"]
+
+
+class MultiCalculationResponse(BaseModel):
+    data: MultiCalculationData
     meta: ResponseMeta
 
 

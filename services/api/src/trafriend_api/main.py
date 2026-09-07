@@ -15,11 +15,13 @@ from trafriend_api.domain.errors import (
     ResourceNotFoundError,
     UnsupportedFeatureError,
 )
+from trafriend_api.presentation.http.dependencies import build_application_services
 from trafriend_api.presentation.http.routers import (
     health,
     instruments,
     leveraged_etf,
     profit_ratio,
+    universe,
 )
 from trafriend_api.settings import Settings
 
@@ -31,6 +33,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         version="0.1.0",
         description="Mock-first market analytics API for TraFriend Phase 1.",
     )
+    services = build_application_services(app_settings)
+    app.state.market_data_service = services.market_data
+    app.state.universe_service = services.universe
 
     app.add_middleware(
         CORSMiddleware,
@@ -138,6 +143,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(instruments.router)
     app.include_router(leveraged_etf.router)
     app.include_router(profit_ratio.router)
+    app.include_router(universe.router)
     return app
 
 

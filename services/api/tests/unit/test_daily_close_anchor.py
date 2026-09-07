@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Sequence
@@ -13,7 +14,7 @@ from trafriend_api.domain.daily_close import (
     DailyCloseQuality,
     DailyCloseValueStatus,
 )
-from trafriend_api.domain.errors import AnchorUnavailableError
+from trafriend_api.domain.errors import AnchorConflictError, AnchorUnavailableError
 from trafriend_api.infrastructure.calendar import NyseTradingCalendar
 from trafriend_api.infrastructure.market_data.mock import MockMarketDataProvider
 from trafriend_api.infrastructure.persistence import InMemoryDailyCloseAnchorRepository
@@ -33,7 +34,7 @@ def _service(scenario: str = "normal") -> DailyCloseAnchorService:
 
 
 def test_capture_accepts_same_date_completed_close_pair() -> None:
-    anchor = _service().capture("rel", "QQQ", "TQQQ")
+    anchor = _service().capture("rel", "QQQ", "TQQQ", Decimal("3"))
 
     assert anchor.status == DailyCloseAnchorStatus.COMPLETE
     assert anchor.trading_date == date(2026, 9, 4)
@@ -79,7 +80,9 @@ def test_capture_never_publishes_missing_or_partial_pair(
     underlying_status: DailyCloseValueStatus,
     leveraged_status: DailyCloseValueStatus,
 ) -> None:
-    anchor = _service(scenario).capture("rel", "QQQ", "TQQQ")
+    anchor = _service(scenario).capture(
+        "rel", "QQQ", "TQQQ", Decimal("3")
+    )
 
     assert anchor.status == expected_status
     assert anchor.underlying.status == underlying_status
@@ -95,8 +98,10 @@ def test_missing_either_anchor_member_cannot_calculate(scenario: str) -> None:
         repository=InMemoryDailyCloseAnchorRepository(),
         now=lambda: NOW,
     )
-    anchor = anchor_service.capture("rel_qqq_tqqq_3x", "QQQ", "TQQQ")
-    calculator = MarketDataService(provider, anchor_service)
+    anchor = anchor_service.capture(
+        "rel_qqq_tqqq_3x", "QQQ", "TQQQ", Decimal("3")
+    )
+    calculator = MarketDataService(provider, anchor_service, provider)
 
     with pytest.raises(AnchorUnavailableError):
         calculator.calculate(
@@ -108,7 +113,9 @@ def test_missing_either_anchor_member_cannot_calculate(scenario: str) -> None:
 
 
 def test_provider_lag_does_not_fall_back_to_prior_trading_date() -> None:
-    anchor = _service("stale").capture("rel", "QQQ", "TQQQ")
+    anchor = _service("stale").capture(
+        "rel", "QQQ", "TQQQ", Decimal("3")
+    )
 
     assert anchor.status == DailyCloseAnchorStatus.UNAVAILABLE
     assert anchor.underlying.status == DailyCloseValueStatus.REJECTED
@@ -152,7 +159,7 @@ def test_capture_rejects_mismatched_member_dates() -> None:
         now=lambda: NOW,
     )
 
-    anchor = service.capture("rel", "QQQ", "TQQQ")
+    anchor = service.capture("rel", "QQQ", "TQQQ", Decimal("3"))
 
     assert anchor.status == DailyCloseAnchorStatus.PARTIAL
     assert anchor.underlying.status == DailyCloseValueStatus.AVAILABLE
@@ -171,10 +178,68 @@ def test_repository_versions_are_immutable_and_missing_latest_is_explicit() -> N
         repository=repository,
         now=lambda: NOW,
     )
-    first = service.capture("rel", "QQQ", "TQQQ")
-    second = service.capture("rel", "QQQ", "TQQQ")
+    first = service.capture("rel", "QQQ", "TQQQ", Decimal("3"))
+    second = service.capture("rel", "QQQ", "TQQQ", Decimal("3"))
 
     assert first.version == 1
-    assert second.version == 2
-    assert first.id != second.id
-    assert service.latest("rel") == second
+    assert second.version == 1
+    assert first.id == second.id
+    assert service.latest("rel") == first
+
+
+def test_conflicting_recapture_is_explicit_and_does_not_overwrite() -> None:
+    repository = InMemoryDailyCloseAnchorRepository()
+    service = DailyCloseAnchorService(
+        provider=MockMarketDataProvider(now=lambda: NOW),
+        calendar=NyseTradingCalendar(),
+        repository=repository,
+        now=lambda: NOW,
+    )
+    stored = service.capture("rel", "QQQ", "TQQQ", Decimal("3"))
+    assert stored.underlying.close is not None
+    conflicting = replace(
+        stored,
+        id="pending",
+        version=0,
+        underlying=replace(
+            stored.underlying,
+            close=stored.underlying.close + Decimal("0.01"),
+        ),
+    )
+
+    with pytest.raises(AnchorConflictError, match="conflicting immutable"):
+        repository.save(conflicting)
+
+    assert repository.latest("rel") == stored
+
+
+def test_incomplete_capture_is_not_persisted() -> None:
+    repository = InMemoryDailyCloseAnchorRepository()
+    service = DailyCloseAnchorService(
+        provider=MockMarketDataProvider("partial", now=lambda: NOW),
+        calendar=NyseTradingCalendar(),
+        repository=repository,
+        now=lambda: NOW,
+    )
+
+    captured = service.capture("rel", "QQQ", "TQQQ", Decimal("3"))
+
+    assert captured.status == DailyCloseAnchorStatus.PARTIAL
+    with pytest.raises(AnchorUnavailableError):
+        repository.latest("rel")
+
+
+def test_latest_never_falls_back_to_an_older_completed_session() -> None:
+    current = [datetime(2026, 9, 3, 21, tzinfo=UTC)]
+    repository = InMemoryDailyCloseAnchorRepository()
+    service = DailyCloseAnchorService(
+        provider=MockMarketDataProvider(now=lambda: current[0]),
+        calendar=NyseTradingCalendar(),
+        repository=repository,
+        now=lambda: current[0],
+    )
+    service.capture("rel", "QQQ", "TQQQ", Decimal("3"))
+    current[0] = NOW
+
+    with pytest.raises(AnchorUnavailableError, match="latest completed session"):
+        service.latest("rel")

@@ -22,6 +22,8 @@ class Instrument:
     currency: str
     status: str
     capabilities: InstrumentCapabilities
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,11 @@ class LeveragedRelationship:
     objective_period: str
     effective_from: date
     effective_to: Optional[date] = None
+    issuer: Optional[str] = None
+    direction: Optional[str] = None
+    status: str = "active"
+    authoritative_source: Optional[str] = None
+    verified_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)

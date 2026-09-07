@@ -55,3 +55,13 @@ def test_latest_completed_session_respects_early_close() -> None:
 
     assert session.trading_date == date(2026, 11, 27)
     assert session.closed_at.astimezone(EASTERN).hour == 13
+
+
+def test_completed_month_dates_include_only_sessions_already_closed() -> None:
+    calendar = NyseTradingCalendar()
+
+    dates = calendar.completed_trading_dates_in_month(
+        datetime(2026, 9, 6, 12, tzinfo=EASTERN), 2026, 9
+    )
+
+    assert dates == tuple(date(2026, 9, day) for day in (1, 2, 3, 4))

@@ -42,3 +42,27 @@ def test_daily_close_feed_and_quality_are_backend_configurable(monkeypatch) -> N
 
     assert settings.alpaca_daily_bars_feed == "iex"
     assert settings.alpaca_daily_bars_quality == DailyCloseQuality.REALTIME
+
+
+def test_daily_close_provider_defaults_to_mock_and_can_select_alpaca(monkeypatch) -> None:
+    monkeypatch.delenv("TRAFRIEND_DAILY_CLOSE_PROVIDER", raising=False)
+    assert Settings.from_environment().daily_close_provider == "mock"
+
+    monkeypatch.setenv("TRAFRIEND_DAILY_CLOSE_PROVIDER", "ALPACA")
+    assert Settings.from_environment().daily_close_provider == "alpaca"
+
+
+def test_database_url_is_secret_and_optional(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://app:private-password@localhost/trafriend_dev",
+    )
+
+    settings = Settings.from_environment()
+
+    assert settings.database_url is not None
+    assert settings.database_url.get_secret_value().endswith("/trafriend_dev")
+    assert "private-password" not in repr(settings)
+
+    monkeypatch.delenv("DATABASE_URL")
+    assert Settings.from_environment().database_url is None

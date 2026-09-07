@@ -30,6 +30,10 @@ class AnchorUnavailableError(TraFriendDomainError):
     """No complete current Daily Close Anchor is available."""
 
 
+class AnchorConflictError(TraFriendDomainError):
+    """A logical Daily Close Anchor conflicts with immutable stored values."""
+
+
 class OvernightSessionError(TraFriendDomainError):
     """A timestamp or trading date is not part of a valid overnight session."""
 

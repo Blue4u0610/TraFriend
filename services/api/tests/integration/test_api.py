@@ -1,5 +1,9 @@
 from fastapi.testclient import TestClient
 
+from trafriend_api.infrastructure.market_data.mock import MockMarketDataProvider
+from trafriend_api.main import create_app
+from trafriend_api.settings import Settings
+
 
 def test_health_uses_mock_provider(client: TestClient) -> None:
     response = client.get("/health")
@@ -24,7 +28,80 @@ def test_instrument_search_and_relationship_resolution(client: TestClient) -> No
     assert relationships.status_code == 200
     data = relationships.json()["data"]
     assert data["underlying"]["symbol"] == "QQQ"
-    assert {item["leverage_factor"] for item in data["relationships"]} == {"3", "-3"}
+    assert {item["leverage_factor"] for item in data["relationships"]} == {
+        "2",
+        "3",
+        "-3",
+    }
+
+
+def test_universe_search_workspace_and_multi_product_calculation(
+    client: TestClient,
+) -> None:
+    search = client.get("/api/v1/universe/search", params={"q": "QQQ"})
+    assert search.status_code == 200
+    assert search.json()["data"][0]["symbol"] == "QQQ"
+
+    workspace = client.get("/api/v1/underlyings/QQQ")
+    assert workspace.status_code == 200
+    rows = workspace.json()["data"]["rows"]
+    assert [row["relationship"]["leveraged_product"]["symbol"] for row in rows] == [
+        "QLD",
+        "TQQQ",
+        "SQQQ",
+    ]
+    assert {row["anchor_source"] for row in rows} == {"CACHE"}
+
+    calculation = client.post(
+        "/api/v1/underlyings/QQQ/calculations",
+        json={"target_price": "504.00"},
+    )
+    assert calculation.status_code == 200
+    results = {
+        row["relationship"]["leveraged_product"]["symbol"]: row
+        for row in calculation.json()["data"]["rows"]
+    }
+    assert results["QLD"]["theoretical_target_price"] == "132.0000"
+    assert results["TQQQ"]["theoretical_target_price"] == "94.8750"
+    assert results["SQQQ"]["theoretical_target_price"] == "26.5200"
+
+
+def test_universe_search_endpoints_keep_underlyings_and_products_separate(
+    client: TestClient,
+) -> None:
+    underlying = client.get(
+        "/api/v1/universe/underlyings/search", params={"q": "QQ"}
+    )
+    products = client.get(
+        "/api/v1/universe/leveraged-products/search", params={"q": "QQ"}
+    )
+
+    assert underlying.status_code == 200
+    assert products.status_code == 200
+    assert [item["symbol"] for item in underlying.json()["data"]] == ["QQQ"]
+    assert {item["symbol"] for item in products.json()["data"]} == {
+        "QLD",
+        "TQQQ",
+        "SQQQ",
+    }
+    assert all(
+        item["instrument_type"] != "leveraged_etf"
+        for item in underlying.json()["data"]
+    )
+    assert all(
+        item["instrument_type"] == "leveraged_etf"
+        for item in products.json()["data"]
+    )
+
+
+def test_popular_endpoint_is_explicitly_not_populated(client: TestClient) -> None:
+    response = client.get("/api/v1/popular")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["period_status"] == "SEPTEMBER_TO_DATE"
+    assert data["population_status"] == "NOT_POPULATED"
+    assert data["rows"] == []
 
 
 def test_forward_calculation_uses_active_mock_close_anchor(client: TestClient) -> None:
@@ -56,6 +133,65 @@ def test_forward_calculation_uses_active_mock_close_anchor(client: TestClient) -
     assert result["anchor"]["anchor_type"] == "DAILY_CLOSE_ANCHOR"
     assert result["formula_version"] == "leveraged-daily-close-linear/v2"
     assert result["warnings"][0]["code"] == "THEORETICAL_SINGLE_DAY_ONLY"
+
+
+def test_sndk_snxx_relationship_is_available_to_calculator(client: TestClient) -> None:
+    anchor_response = client.get(
+        "/api/v1/leveraged-etf/relationships/rel_sndk_snxx_2x/anchor"
+    )
+    assert anchor_response.status_code == 200
+    anchor = anchor_response.json()["data"]
+
+    response = client.post(
+        "/api/v1/leveraged-etf/calculations",
+        json={
+            "relationship_id": "rel_sndk_snxx_2x",
+            "anchor_version_id": anchor["id"],
+            "input_side": "underlying",
+            "target_price": "1827.00",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["leveraged_return"] == "0.10"
+    assert result["output"]["theoretical_target_price"] == "19.0960"
+
+
+def test_calculator_api_read_makes_zero_market_data_provider_calls(
+    monkeypatch,
+) -> None:
+    app = create_app(Settings())
+    calls = {"relationship": 0, "daily_bars": 0}
+
+    def fail_relationship(*args, **kwargs):
+        calls["relationship"] += 1
+        raise AssertionError("calculator API called the relationship provider")
+
+    def fail_daily_bars(*args, **kwargs):
+        calls["daily_bars"] += 1
+        raise AssertionError("calculator API called the daily-bar provider")
+
+    monkeypatch.setattr(MockMarketDataProvider, "get_relationship", fail_relationship)
+    monkeypatch.setattr(MockMarketDataProvider, "get_daily_close_bars", fail_daily_bars)
+
+    with TestClient(app) as isolated_client:
+        anchor_response = isolated_client.get(
+            "/api/v1/leveraged-etf/relationships/rel_sndk_snxx_2x/anchor"
+        )
+        anchor = anchor_response.json()["data"]
+        calculation = isolated_client.post(
+            "/api/v1/leveraged-etf/calculations",
+            json={
+                "relationship_id": "rel_sndk_snxx_2x",
+                "anchor_version_id": anchor["id"],
+                "input_side": "underlying",
+                "target_price": "1827.00",
+            },
+        )
+
+    assert calculation.status_code == 200
+    assert calls == {"relationship": 0, "daily_bars": 0}
 
 
 def test_calculation_rejects_inactive_anchor_version(client: TestClient) -> None:

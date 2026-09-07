@@ -122,11 +122,16 @@ class DailyCloseAnchor:
     captured_at: datetime
     provider: str
     source_feed: str
+    signed_leverage: Decimal
+    created_at: datetime
     anchor_type: str = "DAILY_CLOSE_ANCHOR"
 
     def __post_init__(self) -> None:
         _require_aware(self.session_closed_at, "session_closed_at")
         _require_aware(self.captured_at, "captured_at")
+        _require_aware(self.created_at, "created_at")
+        if not self.signed_leverage.is_finite() or self.signed_leverage == 0:
+            raise ValueError("signed_leverage must be finite and non-zero")
         if self.version < 0:
             raise ValueError("version cannot be negative")
         if self.session_closed_at > self.captured_at:
@@ -163,3 +168,56 @@ class DailyCloseAnchor:
                 raise ValueError("complete anchors cannot mix provider provenance")
             if {self.underlying.currency, self.leveraged_product.currency} != {"USD"}:
                 raise ValueError("complete U.S. anchors must use USD")
+
+
+def daily_close_anchor_identity(anchor: DailyCloseAnchor) -> tuple[str, str, date]:
+    """Return the immutable logical identity required for idempotent capture."""
+
+    return (
+        anchor.underlying.symbol,
+        anchor.leveraged_product.symbol,
+        anchor.trading_date,
+    )
+
+
+def daily_close_anchors_materially_equal(
+    left: DailyCloseAnchor, right: DailyCloseAnchor
+) -> bool:
+    """Compare provider facts while ignoring retry observation/audit timestamps."""
+
+    def value_facts(value: DailyCloseAnchorValue) -> tuple[object, ...]:
+        return (
+            value.symbol,
+            value.close,
+            value.trading_date,
+            value.market_timestamp,
+            value.source,
+            value.source_feed,
+            value.currency,
+            value.quality,
+            value.status,
+        )
+
+    return (
+        left.relationship_id,
+        left.trading_date,
+        left.status,
+        left.session_closed_at,
+        left.provider,
+        left.source_feed,
+        left.signed_leverage,
+        left.anchor_type,
+        value_facts(left.underlying),
+        value_facts(left.leveraged_product),
+    ) == (
+        right.relationship_id,
+        right.trading_date,
+        right.status,
+        right.session_closed_at,
+        right.provider,
+        right.source_feed,
+        right.signed_leverage,
+        right.anchor_type,
+        value_facts(right.underlying),
+        value_facts(right.leveraged_product),
+    )

@@ -27,14 +27,28 @@ def test_mock_provider_conforms_to_market_data_port() -> None:
     assert provider.capabilities.batch_quotes
 
     search_results = provider.search_instruments("qqq", 10)
-    assert [instrument.symbol for instrument in search_results] == ["QQQ", "SQQQ", "TQQQ"]
+    assert [instrument.symbol for instrument in search_results] == [
+        "QQQ",
+        "QLD",
+        "SQQQ",
+        "TQQQ",
+    ]
 
     relationships = provider.get_leveraged_relationships("ins_tqqq_xnas")
-    assert {item.leveraged_product.symbol for item in relationships} == {"TQQQ", "SQQQ"}
+    assert {item.leveraged_product.symbol for item in relationships} == {
+        "QLD",
+        "TQQQ",
+        "SQQQ",
+    }
     assert {item.leverage_factor for item in relationships} == {
+        Decimal("2"),
         Decimal("3"),
         Decimal("-3"),
     }
+    sndk_relationship = provider.get_relationship("rel_sndk_snxx_2x")
+    assert sndk_relationship.underlying.symbol == "SNDK"
+    assert sndk_relationship.leveraged_product.symbol == "SNXX"
+    assert sndk_relationship.leverage_factor == Decimal("2")
 
     bars = provider.get_daily_close_bars(
         ("QQQ", "TQQQ"), date(2026, 9, 4), date(2026, 9, 4)
@@ -92,8 +106,10 @@ def test_incomplete_anchor_cannot_be_used_for_calculation() -> None:
         repository=InMemoryDailyCloseAnchorRepository(),
         now=lambda: NOW,
     )
-    anchor = anchor_service.capture("rel_qqq_tqqq_3x", "QQQ", "TQQQ")
-    service = MarketDataService(provider, anchor_service)
+    anchor = anchor_service.capture(
+        "rel_qqq_tqqq_3x", "QQQ", "TQQQ", Decimal("3")
+    )
+    service = MarketDataService(provider, anchor_service, provider)
 
     assert anchor.status == DailyCloseAnchorStatus.UNAVAILABLE
 

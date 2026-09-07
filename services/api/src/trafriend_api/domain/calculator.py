@@ -54,6 +54,10 @@ def calculate_theoretical_target(
     leverage_factor = relationship.leverage_factor
     if not leverage_factor.is_finite() or leverage_factor == 0:
         raise FinancialInputError("leverage factor must be finite and non-zero")
+    if anchor.signed_leverage != leverage_factor:
+        raise FinancialInputError(
+            "Daily Close Anchor leverage does not match the relationship"
+        )
 
     if input_side == "underlying":
         underlying_return = target_price / underlying_close - Decimal("1")

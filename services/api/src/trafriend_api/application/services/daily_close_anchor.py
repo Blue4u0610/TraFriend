@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Callable, Dict, Sequence
 
 from trafriend_api.application.ports.daily_close import (
+    AnchorPersistenceOutcome,
     CompletedSessionCalendar,
+    DailyCloseAnchorPersistenceResult,
     DailyCloseAnchorRepository,
     DailyCloseMarketDataProvider,
 )
@@ -17,7 +20,7 @@ from trafriend_api.domain.daily_close import (
     DailyCloseQuality,
     DailyCloseValueStatus,
 )
-from trafriend_api.domain.errors import MarketDataProviderError
+from trafriend_api.domain.errors import AnchorUnavailableError, MarketDataProviderError
 
 UTC = timezone.utc
 
@@ -42,7 +45,22 @@ class DailyCloseAnchorService:
         relationship_id: str,
         underlying_symbol: str,
         leveraged_product_symbol: str,
+        signed_leverage: Decimal,
     ) -> DailyCloseAnchor:
+        return self.capture_with_result(
+            relationship_id,
+            underlying_symbol,
+            leveraged_product_symbol,
+            signed_leverage,
+        ).anchor
+
+    def capture_with_result(
+        self,
+        relationship_id: str,
+        underlying_symbol: str,
+        leveraged_product_symbol: str,
+        signed_leverage: Decimal,
+    ) -> DailyCloseAnchorPersistenceResult:
         requested_at = self._utc_now()
         session = self._calendar.latest_completed_session(requested_at)
         symbols = self._normalize_pair(
@@ -63,7 +81,12 @@ class DailyCloseAnchorService:
                 for symbol in symbols
             )
             return self._store(
-                relationship_id, session, values[0], values[1], captured_at
+                relationship_id,
+                session,
+                values[0],
+                values[1],
+                signed_leverage,
+                captured_at,
             )
 
         by_symbol: Dict[str, list[DailyCloseBar]] = {
@@ -80,11 +103,28 @@ class DailyCloseAnchorService:
             for symbol in symbols
         )
         return self._store(
-            relationship_id, session, values[0], values[1], captured_at
+            relationship_id,
+            session,
+            values[0],
+            values[1],
+            signed_leverage,
+            captured_at,
         )
 
     def latest(self, relationship_id: str) -> DailyCloseAnchor:
-        return self._repository.latest(relationship_id)
+        anchor = self._repository.latest(relationship_id)
+        expected = self._calendar.latest_completed_session(
+            self._utc_now()
+        ).trading_date
+        if anchor.trading_date != expected:
+            raise AnchorUnavailableError(
+                "Daily Close Anchor is unavailable for the latest completed session"
+            )
+        return anchor
+
+    def expected_session(self) -> CompletedTradingSession:
+        """Return the calendar-derived latest completed regular session."""
+        return self._calendar.latest_completed_session(self._utc_now())
 
     def _value_for(
         self,
@@ -175,8 +215,9 @@ class DailyCloseAnchorService:
         session: CompletedTradingSession,
         underlying: DailyCloseAnchorValue,
         leveraged_product: DailyCloseAnchorValue,
+        signed_leverage: Decimal,
         captured_at: datetime,
-    ) -> DailyCloseAnchor:
+    ) -> DailyCloseAnchorPersistenceResult:
         available_count = sum(
             value.status == DailyCloseValueStatus.AVAILABLE
             for value in (underlying, leveraged_product)
@@ -209,7 +250,14 @@ class DailyCloseAnchorService:
             captured_at=captured_at,
             provider=provider,
             source_feed=source_feed,
+            signed_leverage=signed_leverage,
+            created_at=captured_at,
         )
+        if anchor.status != DailyCloseAnchorStatus.COMPLETE:
+            return DailyCloseAnchorPersistenceResult(
+                anchor=anchor,
+                outcome=AnchorPersistenceOutcome.NOT_PERSISTED,
+            )
         return self._repository.save(anchor)
 
     def _utc_now(self) -> datetime:

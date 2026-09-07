@@ -4,7 +4,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Sequence
 
-from trafriend_api.application.ports.market_data import MarketDataProvider
+from trafriend_api.application.ports.market_data import (
+    LeveragedRelationshipCatalog,
+    MarketDataProvider,
+)
 from trafriend_api.application.services.daily_close_anchor import DailyCloseAnchorService
 from trafriend_api.domain.calculator import calculate_theoretical_target
 from trafriend_api.domain.daily_close import DailyCloseAnchor, DailyCloseAnchorStatus
@@ -25,30 +28,32 @@ class MarketDataService:
         self,
         provider: MarketDataProvider,
         anchor_service: DailyCloseAnchorService,
+        relationship_catalog: LeveragedRelationshipCatalog,
     ) -> None:
         self._provider = provider
         self._anchor_service = anchor_service
+        self._relationship_catalog = relationship_catalog
 
     @property
     def provider_code(self) -> str:
         return self._provider.provider_code
 
     def search_instruments(self, query: str, limit: int = 10) -> Sequence[Instrument]:
-        return self._provider.search_instruments(query=query, limit=limit)
+        return self._relationship_catalog.search_instruments(query=query, limit=limit)
 
     def get_instrument(self, instrument_id: str) -> Instrument:
-        return self._provider.get_instrument(instrument_id)
+        return self._relationship_catalog.get_instrument(instrument_id)
 
     def get_leveraged_relationships(
         self, instrument_id: str
     ) -> Sequence[LeveragedRelationship]:
-        return self._provider.get_leveraged_relationships(instrument_id)
+        return self._relationship_catalog.get_leveraged_relationships(instrument_id)
 
     def get_relationship(self, relationship_id: str) -> LeveragedRelationship:
-        return self._provider.get_relationship(relationship_id)
+        return self._relationship_catalog.get_relationship(relationship_id)
 
     def get_anchor(self, relationship_id: str) -> DailyCloseAnchor:
-        self._provider.get_relationship(relationship_id)
+        self._relationship_catalog.get_relationship(relationship_id)
         return self._anchor_service.latest(relationship_id)
 
     def calculate(
@@ -58,7 +63,7 @@ class MarketDataService:
         input_side: str,
         target_price: Decimal,
     ) -> CalculationResult:
-        relationship = self._provider.get_relationship(relationship_id)
+        relationship = self._relationship_catalog.get_relationship(relationship_id)
         anchor = self._anchor_service.latest(relationship_id)
         if anchor.id != anchor_version_id:
             raise AnchorVersionInactiveError(

@@ -3,9 +3,9 @@
 ## Phase 1 stack
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and shadcn/ui.
-- Backend: Python 3.9+, FastAPI, Pydantic 2, Uvicorn, and pytest.
-- Data: deterministic in-memory Mock provider by default; optional Alpaca REST adapter for manual daily-close and overnight validation.
-- Not included: Futu/OpenD implementation, PostgreSQL, public live-data serving, or automatic scheduling.
+- Backend: Python 3.9+, FastAPI, Pydantic 2, Uvicorn, SQLAlchemy 2, Alembic, psycopg 3, and pytest.
+- Data: deterministic in-memory Mock mode when `DATABASE_URL` is absent; PostgreSQL-backed universe metadata, rankings, and Daily Close Anchors when it is set; optional Alpaca REST capture and overnight diagnostics.
+- Not included: Futu/OpenD, deployment-platform scheduler configuration, authentication, or Profit Ratio production data.
 
 The frontend and backend run as separate applications. Their dependencies and commands are intentionally independent.
 
@@ -13,6 +13,7 @@ The frontend and backend run as separate applications. Their dependencies and co
 
 - Node.js 22 LTS and npm.
 - Python 3.9 or later.
+- PostgreSQL for persistent Daily Close Anchors. A GUI client is optional and not required.
 
 Verify the runtimes:
 
@@ -45,17 +46,61 @@ Useful local URLs:
 - OpenAPI: `http://127.0.0.1:8000/openapi.json`
 - Interactive API docs: `http://127.0.0.1:8000/docs`
 
-The public API still uses the Mock provider and needs no market-data account or credential. The Alpaca adapter is reachable only through the manual backend commands described below.
+Without `DATABASE_URL`, the public API keeps deterministic in-memory Mock anchors and needs no market-data account or database. With `DATABASE_URL`, catalog search, ranking reads, and calculator anchors use PostgreSQL. Normal calculations never request Alpaca. A selected-symbol resolve may capture only a missing latest-session pair when `TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca`; the safe default remains `mock`.
 
-## Manual Daily Close Anchor validation
+## Local PostgreSQL setup
 
-The calculator uses `DAILY_CLOSE_ANCHOR`, not an overnight open or snapshot. With backend-only Alpaca credentials in the current process, validate the latest completed regular-session close pairs from `services/api`:
+Check an existing installation before changing it:
 
 ```bash
-.venv/bin/python -m trafriend_api.scripts.validate_daily_close_anchor
+psql --version
+pg_isready -h localhost -p 5432
 ```
 
-The command asks the XNYS calendar for the latest completed session, makes batched `1Day` requests with `feed=sip` and `adjustment=raw`, and validates SNDK/SNXX and QQQ/TQQQ on exactly that trading date. It also runs the requested deterministic scenarios: SNDK `+5%` maps to SNXX `+10%`, and QQQ `+2%` maps to TQQQ `+6%`. Output includes close, provider market timestamp, backend observation time, feed, quality, and status. It never prints credentials.
+If an installer placed binaries outside `PATH`, invoke its `bin/psql` and `bin/pg_isready` directly. Start the server using its existing installation method (for example, the vendor service or `brew services`); TraFriend does not require Docker, DBeaver, or pgAdmin.
+
+Create a least-privilege local application role and dedicated database from an administrator session if they do not already exist:
+
+```sql
+CREATE ROLE trafriend_app LOGIN PASSWORD 'choose-a-local-password';
+CREATE DATABASE trafriend_dev OWNER trafriend_app;
+```
+
+Set the credential-bearing URL only in the backend process environment:
+
+```bash
+export DATABASE_URL='postgresql+psycopg://trafriend_app:your-local-password@localhost:5432/trafriend_dev'
+```
+
+Apply the schema from `services/api`:
+
+```bash
+.venv/bin/alembic upgrade head
+```
+
+The migrations create `daily_close_anchors`, `underlyings`, `leveraged_products`, and `market_rankings`. `alembic downgrade base` is supported for a disposable database, but it destroys stored anchors and must not be used on data that must be retained.
+
+## Manual Daily Close Anchor capture
+
+The calculator uses `DAILY_CLOSE_ANCHOR`, not an overnight open or snapshot. With `DATABASE_URL` and backend-only Alpaca credentials in the current process, capture one configured pair from `services/api`:
+
+```bash
+.venv/bin/python -m trafriend_api.scripts.capture_daily_close_anchor \
+  --underlying SNDK \
+  --leveraged-etf SNXX
+```
+
+The command asks the XNYS calendar for the latest completed session, makes one batched `1Day` request with `feed=sip` and `adjustment=raw`, validates both symbols on exactly that trading date, and atomically persists the complete pair. It prints `INSERTED` on the first capture and `EXISTING` for an identical retry. A materially different close, leverage, provider, feed, date, or market timestamp for the same symbol-pair/date identity raises an explicit immutable conflict; it never updates the stored row. Missing, stale, mismatched-date, and unavailable pairs are not persisted.
+
+Capture the second validated pair the same way:
+
+```bash
+.venv/bin/python -m trafriend_api.scripts.capture_daily_close_anchor \
+  --underlying QQQ \
+  --leveraged-etf TQQQ
+```
+
+Each successful command disposes and recreates its database engine/repository, reads the anchor back, and runs the requested deterministic calculator scenario. The legacy read-only `validate_daily_close_anchor` command remains available for in-memory provider diagnostics.
 
 Default environment overrides are:
 
@@ -64,7 +109,77 @@ export TRAFRIEND_ALPACA_DAILY_BARS_FEED=sip
 export TRAFRIEND_ALPACA_DAILY_BARS_QUALITY=DELAYED
 ```
 
-The diagnostic writes only an in-memory immutable anchor version. It does not add PostgreSQL, a scheduler, an ingestion route, or frontend live data.
+There is no provider fallback on calculation requests. The API selects PostgreSQL for
+Daily Close Anchor reads when `DATABASE_URL` is configured. The selected-symbol
+resolve use case is the only user-facing on-demand cache path; bulk capture remains
+an explicit backend command. For a real local on-demand smoke test, start FastAPI
+with the inherited database and credentials plus the non-secret adapter selection:
+
+```bash
+TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca \
+.venv/bin/uvicorn trafriend_api.main:app --host 127.0.0.1 --port 8000
+```
+
+The default `mock` setting remains credential-free for CI and in-memory development.
+When `DATABASE_URL` is present, that default may read persisted anchors but is not
+allowed to write Mock closes into PostgreSQL; uncached rows remain explicitly
+unavailable until the Alpaca adapter is selected.
+
+## Leveraged universe and daily capture job
+
+Migration `20260906_0002` establishes the catalog schema and its original eight
+issuer/SEC-verified relationships. Migrations `20260907_0004` and
+`20260907_0005` expand the verified 2026-09-07 snapshot to 264 active daily products
+across 75 underlyings. This covers every directly mapped daily leveraged product
+found for the 73 current September Top-100 stocks that have such a product, plus QQQ
+and SOXX. The snapshot is based on official issuer catalogs plus active Alpaca assets;
+it intentionally excludes option-income, different-index/basket, and non-daily-reset
+products and must be refreshed as issuers launch or close funds.
+Search is metadata-only and is exposed as separate underlying and leveraged-product
+routes. The independently runnable capture command expands an underlying into all of
+its products:
+
+```bash
+TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca \
+.venv/bin/python -m trafriend_api.scripts.capture_popular_daily_closes \
+  --symbols QQQ,SNDK
+```
+
+Omit `--symbols` only after a verified popular dataset is populated. The command resolves the actual latest completed XNYS session, reports `VALID`, `PARTIAL`, or `FAILED`, and returns exit status 0, 2, or 1 respectively. It is safe to retry: complete identical anchors report `EXISTING`; missing products remain unavailable without corrupting valid siblings.
+
+An external cron or deployment scheduler may invoke this command after the regular session and retry publication lag. Do not put a loop or sleep in FastAPI and do not hardcode a UTC close time. The command always asks the exchange calendar, which handles DST, weekends, holidays, and early closes.
+
+## September market-ranking calculation
+
+The approved first-party metric is `SUM(daily VWAP * daily share volume)` across every completed September 2026 exchange session. The calculation uses Alpaca's active `us_equity` asset list and raw SIP `1Day` bars in batches of at most 200 symbols. A symbol is complete only when one positive VWAP/volume bar exists for every expected session; there is no close-price fallback for missing VWAP.
+
+Run the authenticated, idempotent calculation from `services/api`:
+
+```bash
+.venv/bin/python -m trafriend_api.scripts.calculate_september_mtd_rankings
+```
+
+The exchange calendar determines the completed session dates. The security filter excludes OTC records and metadata/name patterns that explicitly identify ETFs/ETNs, leveraged or inverse funds, warrants, rights, units, preferred shares, and blank-check acquisition companies. Alpaca does not expose a comprehensive security-type field, so ordinary-stock versus every possible non-leveraged ETF distinction cannot be proven perfectly from this interface. The curated ETF/product symbols are always excluded.
+
+The command atomically replaces `2026-09` / `DOLLAR_TRADING_VOLUME`; reruns cannot create duplicate ranks or symbols. The rows remain `SEPTEMBER_TO_DATE` until September is complete.
+
+## Market-ranking importer
+
+The source-attributed CSV importer remains available for a separately licensed dataset. It is not needed for the Alpaca first-party build and never seeds placeholders.
+
+Import a verified CSV containing `rank,symbol,trading_metric` only after recording its source and covered interval:
+
+```bash
+.venv/bin/python -m trafriend_api.scripts.import_market_rankings \
+  --file /absolute/path/september-ranking.csv \
+  --period 2026-09 \
+  --period-start 2026-09-01 \
+  --period-end 2026-09-04 \
+  --period-status SEPTEMBER_TO_DATE \
+  --source 'licensed-source-and-methodology'
+```
+
+The importer atomically replaces one period/type. It refuses to label September 2026 final before the month ends. Alpaca's standard account terms do not grant public redistribution rights; obtain written permission or a separate licensed data source before exposing stored real closes or rankings in a public product.
 
 ## Separate manual overnight diagnostics
 
@@ -198,6 +313,7 @@ Frontend:
 cd apps/web
 npm run lint
 npm run typecheck
+npm test
 npm run build
 ```
 
@@ -224,7 +340,7 @@ cd services/api
 .venv/bin/uvicorn trafriend_api.main:app --host 127.0.0.1 --port 8000
 ```
 
-## Mock API surface
+## API surface
 
 Phase 1 implements:
 
@@ -232,6 +348,14 @@ Phase 1 implements:
 - `GET /api/v1/instruments/search`
 - `GET /api/v1/instruments/{instrument_id}`
 - `GET /api/v1/instruments/{instrument_id}/leveraged-products`
+- `GET /api/v1/universe/search`
+- `GET /api/v1/universe/underlyings/search`
+- `GET /api/v1/universe/leveraged-products/search`
+- `GET /api/v1/underlyings/{symbol}`
+- `GET /api/v1/underlyings/{symbol}/leveraged-products`
+- `POST /api/v1/underlyings/{symbol}/resolve`
+- `POST /api/v1/underlyings/{symbol}/calculations`
+- `GET /api/v1/popular`
 - `GET /api/v1/leveraged-etf/relationships/{relationship_id}/anchor`
 - `POST /api/v1/leveraged-etf/calculations`
 - `GET /api/v1/profit-ratio/instruments/{instrument_id}/latest`
@@ -242,6 +366,9 @@ Mock close anchors and Profit Ratio points are deterministic. They are deliberat
 ## Troubleshooting
 
 - If the dashboard says `API offline`, ensure Uvicorn is running on port 8000.
+- If the leverage page was opened before Uvicorn, start the API and use the page's
+  `Retry data` action. The QQQ workspace and Popular dataset recover without a full-page
+  reload; metadata search reports its own loading, empty, and API-unavailable states.
 - If browser requests are rejected by CORS after changing the frontend port, add the exact local origin to `TRAFRIEND_CORS_ORIGINS` before starting the API.
 - If port 3000 or 8000 is already in use, select another port and update `NEXT_PUBLIC_API_BASE_URL` and the backend CORS origin together.
 - If a language change appears stale during development, confirm cookies are enabled for `localhost` and reload once; clearing the `trafriend_locale` cookie restores English as the default.

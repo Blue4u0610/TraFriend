@@ -57,6 +57,8 @@ def _anchor(
         captured_at=STAMP,
         provider="test",
         source_feed="daily",
+        signed_leverage=relationship.leverage_factor,
+        created_at=STAMP,
     )
 
 

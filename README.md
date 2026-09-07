@@ -23,6 +23,10 @@ TraFriend 仅用于信息、教育与研究，不提供投资建议、交易执�
 
 这些关系来自明确配置，不会根据 ticker 名称自动猜测。
 
+### 2026 年 9 月热门股票
+
+热门列表使用已完成交易日的 Alpaca SIP 每日数据，按 `每日 VWAP × 每日成交量` 求和后生成 9 月月初至今美元成交额 Top 100。排名通过交易所日历确定覆盖日期，并与杠杆 ETF 关系和每日收盘锚点分开存储。没有经核验杠杆产品的股票仍可显示，但会明确标记为 0 个支持产品。
+
 ### 每日收盘锚点
 
 计算器使用 `DAILY_CLOSE_ANCHOR`：两只产品在最近一个已完成的美国常规交易时段、同一交易日的收盘价。
@@ -84,6 +88,10 @@ TraFriend 计划展示当前与历史获利比，并配合价格序列观察变�
 ### Single-day leveraged ETF calculator
 
 The calculator translates a theoretical single-day target in either direction between an underlying stock or ordinary ETF and a configured leveraged ETF. Supported relationships are curated metadata—not inferred from ticker names—and include SNDK/SNXX, NVDA/NVDL, TSLA/TSLL, QQQ/QLD/TQQQ/SQQQ, and SOXX/SOXL/SOXS with their signed daily leverage factors.
+
+### September 2026 popular stocks
+
+The Popular list is a September-to-date Top 100 calculated from completed-session Alpaca SIP daily data using `SUM(daily VWAP × daily share volume)`. Exchange-calendar dates, source, coverage, and calculation time are persisted separately from leveraged-product relationships and Daily Close Anchors. A ranked stock with no verified TraFriend leveraged product remains visible with a supported-product count of zero.
 
 ### Daily Close Anchor
 

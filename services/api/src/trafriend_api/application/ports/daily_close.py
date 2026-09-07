@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import date, datetime
+from enum import Enum
 from typing import Sequence
 
 from trafriend_api.domain.daily_close import (
@@ -39,9 +41,23 @@ class CompletedSessionCalendar(ABC):
         raise NotImplementedError
 
 
+class AnchorPersistenceOutcome(str, Enum):
+    INSERTED = "INSERTED"
+    EXISTING = "EXISTING"
+    NOT_PERSISTED = "NOT_PERSISTED"
+
+
+@dataclass(frozen=True)
+class DailyCloseAnchorPersistenceResult:
+    anchor: DailyCloseAnchor
+    outcome: AnchorPersistenceOutcome
+
+
 class DailyCloseAnchorRepository(ABC):
     @abstractmethod
-    def save(self, anchor: DailyCloseAnchor) -> DailyCloseAnchor:
+    def save(
+        self, anchor: DailyCloseAnchor
+    ) -> DailyCloseAnchorPersistenceResult:
         raise NotImplementedError
 
     @abstractmethod

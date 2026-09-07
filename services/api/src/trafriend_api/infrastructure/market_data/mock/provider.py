@@ -33,6 +33,7 @@ from trafriend_api.domain.overnight import (
 )
 
 UTC = timezone.utc
+UNIVERSE_VERIFIED_AT = datetime(2026, 9, 6, 12, tzinfo=UTC)
 
 
 def _at(year: int, month: int, day: int, hour: int = 20) -> datetime:
@@ -375,6 +376,26 @@ class MockMarketDataProvider(
             leveraged_relationships=True, profit_ratio=False
         )
         return {
+            "ins_sndk_xnas": Instrument(
+                id="ins_sndk_xnas",
+                symbol="SNDK",
+                name="Sandisk Corporation",
+                instrument_type="stock",
+                exchange_mic="XNAS",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
+            "ins_snxx_xnas": Instrument(
+                id="ins_snxx_xnas",
+                symbol="SNXX",
+                name="Tradr 2X Long SNDK Daily ETF",
+                instrument_type="leveraged_etf",
+                exchange_mic="XNAS",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
             "ins_qqq_xnas": Instrument(
                 id="ins_qqq_xnas",
                 symbol="QQQ",
@@ -389,6 +410,16 @@ class MockMarketDataProvider(
                 id="ins_tqqq_xnas",
                 symbol="TQQQ",
                 name="ProShares UltraPro QQQ",
+                instrument_type="leveraged_etf",
+                exchange_mic="XNAS",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
+            "ins_qld_xnas": Instrument(
+                id="ins_qld_xnas",
+                symbol="QLD",
+                name="ProShares Ultra QQQ",
                 instrument_type="leveraged_etf",
                 exchange_mic="XNAS",
                 currency="USD",
@@ -425,10 +456,89 @@ class MockMarketDataProvider(
                 status="active",
                 capabilities=leveraged_only,
             ),
+            "ins_tsla_xnas": Instrument(
+                id="ins_tsla_xnas",
+                symbol="TSLA",
+                name="Tesla, Inc.",
+                instrument_type="stock",
+                exchange_mic="XNAS",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
+            "ins_tsll_xnas": Instrument(
+                id="ins_tsll_xnas",
+                symbol="TSLL",
+                name="Direxion Daily TSLA Bull 2X ETF",
+                instrument_type="leveraged_etf",
+                exchange_mic="XNAS",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
+            "ins_soxx_xnas": Instrument(
+                id="ins_soxx_xnas",
+                symbol="SOXX",
+                name="iShares Semiconductor ETF",
+                instrument_type="etf",
+                exchange_mic="XNAS",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
+            "ins_soxl_arcx": Instrument(
+                id="ins_soxl_arcx",
+                symbol="SOXL",
+                name="Direxion Daily Semiconductor Bull 3X ETF",
+                instrument_type="leveraged_etf",
+                exchange_mic="ARCX",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
+            "ins_soxs_arcx": Instrument(
+                id="ins_soxs_arcx",
+                symbol="SOXS",
+                name="Direxion Daily Semiconductor Bear 3X ETF",
+                instrument_type="leveraged_etf",
+                exchange_mic="ARCX",
+                currency="USD",
+                status="active",
+                capabilities=leveraged_only,
+            ),
         }
 
     def _build_relationships(self) -> Dict[str, LeveragedRelationship]:
         relationships = (
+            LeveragedRelationship(
+                id="rel_sndk_snxx_2x",
+                underlying=self._instruments["ins_sndk_xnas"],
+                leveraged_product=self._instruments["ins_snxx_xnas"],
+                leverage_factor=Decimal("2"),
+                objective_period="daily",
+                effective_from=date(2026, 1, 26),
+                issuer="Tradr ETFs",
+                direction="LONG",
+                authoritative_source=(
+                    "https://www.sec.gov/Archives/edgar/data/1587982/"
+                    "000121390026008044/ea0273211-04_497k.htm"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
+            ),
+            LeveragedRelationship(
+                id="rel_qqq_qld_2x",
+                underlying=self._instruments["ins_qqq_xnas"],
+                leveraged_product=self._instruments["ins_qld_xnas"],
+                leverage_factor=Decimal("2"),
+                objective_period="daily",
+                effective_from=date(2006, 6, 19),
+                issuer="ProShares",
+                direction="LONG",
+                authoritative_source=(
+                    "https://www.proshares.com/our-etfs/leveraged-and-inverse/qld"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
+            ),
             LeveragedRelationship(
                 id="rel_qqq_tqqq_3x",
                 underlying=self._instruments["ins_qqq_xnas"],
@@ -436,6 +546,12 @@ class MockMarketDataProvider(
                 leverage_factor=Decimal("3"),
                 objective_period="daily",
                 effective_from=date(2010, 2, 9),
+                issuer="ProShares",
+                direction="LONG",
+                authoritative_source=(
+                    "https://www.proshares.com/our-etfs/leveraged-and-inverse/tqqq"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
             ),
             LeveragedRelationship(
                 id="rel_qqq_sqqq_n3x",
@@ -444,6 +560,12 @@ class MockMarketDataProvider(
                 leverage_factor=Decimal("-3"),
                 objective_period="daily",
                 effective_from=date(2010, 2, 9),
+                issuer="ProShares",
+                direction="INVERSE",
+                authoritative_source=(
+                    "https://www.proshares.com/our-etfs/leveraged-and-inverse/sqqq"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
             ),
             LeveragedRelationship(
                 id="rel_nvda_nvdl_2x",
@@ -451,7 +573,56 @@ class MockMarketDataProvider(
                 leveraged_product=self._instruments["ins_nvdl_xnas"],
                 leverage_factor=Decimal("2"),
                 objective_period="daily",
-                effective_from=date(2023, 12, 4),
+                effective_from=date(2022, 12, 13),
+                issuer="GraniteShares",
+                direction="LONG",
+                authoritative_source="https://graniteshares.com/etfs/nvdl/",
+                verified_at=UNIVERSE_VERIFIED_AT,
+            ),
+            LeveragedRelationship(
+                id="rel_tsla_tsll_2x",
+                underlying=self._instruments["ins_tsla_xnas"],
+                leveraged_product=self._instruments["ins_tsll_xnas"],
+                leverage_factor=Decimal("2"),
+                objective_period="daily",
+                effective_from=date(2022, 8, 9),
+                issuer="Direxion",
+                direction="LONG",
+                authoritative_source=(
+                    "https://www.direxion.com/product/"
+                    "daily-tsla-bull-and-bear-leveraged-single-stock-etfs"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
+            ),
+            LeveragedRelationship(
+                id="rel_soxx_soxl_3x",
+                underlying=self._instruments["ins_soxx_xnas"],
+                leveraged_product=self._instruments["ins_soxl_arcx"],
+                leverage_factor=Decimal("3"),
+                objective_period="daily",
+                effective_from=date(2010, 3, 11),
+                issuer="Direxion",
+                direction="LONG",
+                authoritative_source=(
+                    "https://www.direxion.com/product/"
+                    "daily-semiconductor-bull-bear-3x-etfs"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
+            ),
+            LeveragedRelationship(
+                id="rel_soxx_soxs_n3x",
+                underlying=self._instruments["ins_soxx_xnas"],
+                leveraged_product=self._instruments["ins_soxs_arcx"],
+                leverage_factor=Decimal("-3"),
+                objective_period="daily",
+                effective_from=date(2010, 3, 11),
+                issuer="Direxion",
+                direction="INVERSE",
+                authoritative_source=(
+                    "https://www.direxion.com/product/"
+                    "daily-semiconductor-bull-bear-3x-etfs"
+                ),
+                verified_at=UNIVERSE_VERIFIED_AT,
             ),
         )
         return {relationship.id: relationship for relationship in relationships}

@@ -147,7 +147,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         complete = True
         for relationship_id, underlying, product, target_multiple in PAIR_CASES:
-            anchor = service.capture(relationship_id, underlying, product)
+            anchor = service.capture(
+                relationship_id,
+                underlying,
+                product,
+                _signed_leverage(underlying, product),
+            )
             _print_anchor(anchor)
             _print_calculation(
                 anchor,

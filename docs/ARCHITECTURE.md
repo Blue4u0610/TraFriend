@@ -13,7 +13,7 @@ TraFriend should begin as a small, deployable system without baking vendor, fram
 
 ## 2. Chosen system shape
 
-Use a **monorepo with independently deployable frontend and backend applications**. The backend starts as a **modular monolith** with ports-and-adapters boundaries. PostgreSQL is added when persistent data workflows begin. A separately runnable backend worker executes scheduled ingestion jobs while importing the same application and domain modules as the API.
+Use a **monorepo with independently deployable frontend and backend applications**. The backend is a **modular monolith** with ports-and-adapters boundaries. PostgreSQL persists immutable Daily Close Anchors, the curated leveraged-product universe, and separately sourced market rankings. Daily capture is an independently runnable application command; an external platform scheduler may invoke it without placing a loop in FastAPI.
 
 ```text
 Browser
@@ -67,7 +67,7 @@ TraFriend/
 ├── services/
 │   └── api/                          # Python + FastAPI application
 │       ├── pyproject.toml
-│       ├── migrations/               # Added when PostgreSQL starts
+│       ├── migrations/               # Alembic Daily Close Anchor schema history
 │       ├── src/trafriend_api/
 │       │   ├── main.py               # Composition root only
 │       │   ├── presentation/http/    # FastAPI routers, schemas, exception mapping
@@ -127,6 +127,9 @@ The application layer implements use cases and declares ports. It may depend on 
 - Get the active Daily Close Anchor.
 - Calculate a leveraged or underlying theoretical target.
 - Capture and publish daily close anchors.
+- Resolve all cached anchors for one underlying and capture only missing latest-session pairs on demand.
+- Calculate every available leveraged child from one underlying target.
+- Read an independently sourced popular-underlying ranking.
 - Get current and historical Profit Ratio data.
 
 Clock and trading-calendar behavior are injected ports so tests can control dates, daylight saving transitions, and holidays.
@@ -173,6 +176,15 @@ DailyCloseAnchorRepository
   save(anchor) -> immutable version
   latest(relationship_id) -> anchor
 
+LeveragedRelationshipCatalog
+  search_instruments(query, limit) -> provider-independent metadata
+  get_relationship(id) -> verified signed-leverage metadata
+  get_leveraged_relationships(instrument_id) -> all active children
+
+MarketRankingRepository
+  get_dataset(period, ranking_type, limit) -> sourced underlyings
+  replace_verified_rows(rows) -> atomic importer operation
+
 OvernightMarketDataProvider
   get_latest_quotes(symbols) -> normalized quotes
   get_overnight_snapshot(symbols, target_timestamp) -> normalized quotes
@@ -213,30 +225,37 @@ Provider feasibility, cost, operational tradeoffs, and data rights are tracked i
 
 `DAILY_CLOSE_ANCHOR` is the calculator's only reference method. It contains the regular-session closing prices of the underlying and leveraged ETF for one same, latest completed XNYS trading date. The calendar adapter determines that session from an aware current instant, including holidays and special closes; the service does not infer it from wall-clock hour or weekday logic.
 
-The provider returns normalized `DailyCloseBar` values. The application service accepts exactly one expected-date bar per symbol, validates positive Decimal closes, provider/feed provenance, usable quality, and non-future timestamps, then stores an immutable `COMPLETE`, `PARTIAL`, or `UNAVAILABLE` version. A prior-date response indicates provider lag and is rejected rather than used as fallback.
+The provider returns normalized `DailyCloseBar` values. The application service accepts exactly one expected-date bar per symbol, validates positive Decimal closes, provider/feed provenance, usable quality, and non-future timestamps, then stores an immutable `COMPLETE` anchor. `PARTIAL` and `UNAVAILABLE` remain explicit capture outcomes but are not published to the calculator table. A prior-date response indicates provider lag and is rejected rather than used as fallback. On reads, the service compares the persisted anchor date with the calendar's latest completed session, so an older complete row cannot become a silent fallback after a failed newer capture.
 
 ### 6.2 Capture workflow
 
 ```text
-Manual command now; scheduler later
+External scheduler or manual command
   -> resolve the latest completed exchange session
-  -> create/idempotently resume capture run
-  -> load active leveraged-product relationships
-  -> batch daily-bar requests where the provider supports them
+  -> resolve curated signed leverage metadata
+  -> request the two daily bars in one provider batch
   -> normalize and validate same-date closes
   -> assemble each underlying/leveraged pair
-  -> transactionally persist immutable pair version
-  -> mark one complete version active
-  -> emit metrics and invalidate affected caches
+  -> transactionally insert or reuse the immutable pair
+  -> recreate the repository and verify a DB-only calculation
 ```
 
 Validation includes positive prices, expected currency, supported instrument status, expected trading date, provider/feed provenance, market timestamp, and observation time. A pair is atomic: one valid close and one missing/rejected close is not calculator-eligible.
 
-A run can succeed for some relationships and fail for others. This limits blast radius. Failed relationships retry according to a bounded policy. Once a complete version is active, ordinary retries do not replace it. An operator correction creates a new immutable version with an explicit reason and activation audit record.
+The legacy manual command captures one relationship per invocation. The `capture_popular_daily_closes` command expands each selected underlying into every active catalog relationship and isolates a missing child from unrelated valid pairs. Its logical identity is `(underlying_symbol, leveraged_product_symbol, trading_date)`. An identical retry returns the existing row. Materially different immutable facts for the same identity raise `AnchorConflictError`; no update occurs. A database trigger rejects direct row updates and deletes. A future correction workflow will require an explicit reviewed migration/version policy rather than weakening this invariant.
 
 ### 6.3 Read workflow
 
-A calculation loads the active relationship and latest stored complete Daily Close Anchor. It never asks the live provider for new prices. It then invokes the pure domain formula and returns the result with the exact anchor version.
+A calculation loads the active relationship from `LeveragedRelationshipCatalog` and the latest stored complete Daily Close Anchor through `DailyCloseAnchorRepository`. With `DATABASE_URL`, the composition root selects `PostgreSQLLeveragedUniverseRepository`, `PostgreSQLMarketRankingRepository`, and `PostgreSQLDailyCloseAnchorRepository`; without it, deterministic local/CI tests retain in-memory adapters. Anchor and calculation requests do not call the broad market-data provider or Alpaca. The pure domain formula returns the result with the exact anchor version.
+
+Metadata search is catalog-only and has distinct underlying and leveraged-product
+ports/endpoints; the combined endpoint remains compatibility-only. Selecting either
+kind of supported symbol invokes the on-demand resolve use case: it resolves the
+canonical underlying, checks every current relationship anchor first, calls the
+configured daily-close provider only for missing latest-session pairs, persists
+complete pairs, and returns an explicit unavailable row for missing children. With a
+PostgreSQL configuration, the Mock adapter is read-only for this workflow so it
+cannot contaminate persisted real anchors. The browser never calls Alpaca directly.
 
 If the expected completed-session version is unavailable, partial, stale, mixed-date, or lagging, the application returns a typed data-availability error. It must not silently substitute a prior session. A future explicitly labeled historical calculator may allow the caller to choose an older trading date.
 
@@ -246,9 +265,11 @@ If the expected completed-session version is unavailable, partial, stale, mixed-
 
 ### 6.5 Scheduling
 
-The scheduler and worker will run outside the request-serving web process. Scheduling is intentionally not implemented in this phase. The manual command must prove feed semantics, timestamps, missing-symbol behavior, and licensing first. When added, a platform scheduler will invoke the same provider-neutral application use case.
+Scheduling stays outside the request-serving web process. `capture_popular_daily_closes` is the idempotent scheduled-job entry point; it asks the exchange calendar for the latest completed session on every invocation, so DST, holidays, weekends, and early closes are not encoded in cron time. A platform scheduler should invoke it after the close and retry on `PARTIAL` or `FAILED`. The job contains no `while True` loop and FastAPI never starts it.
 
-Use a distributed/advisory lock plus database uniqueness for idempotency when multiple workers are possible. Store all timestamps in UTC and store the derived exchange trading date separately.
+The September 2026 ranking is calculated independently from the anchor workflow. `MarketRankingService` obtains Alpaca's active U.S.-equity asset universe through `RankingMarketDataProvider`, applies explicit security exclusions, requests raw SIP daily bars in batches, and calculates `SUM(daily VWAP * daily share volume)` only for symbols complete across every exchange-calendar session. `MarketRankingRepository.replace_verified_rows` atomically replaces one effective period/type, preserving ranking/anchor separation and rerun idempotency. A source-attributed CSV importer remains as an alternate ingestion boundary.
+
+The PostgreSQL repository already combines a transaction-scoped advisory lock with unique logical-identity and relationship/version constraints. Store all timestamps as timezone-aware instants and the exchange trading date separately.
 
 ## 7. Calculator design
 
