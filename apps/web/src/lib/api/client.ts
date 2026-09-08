@@ -12,6 +12,10 @@ import type {
   UnderlyingWorkspace,
 } from "@/lib/api/types";
 import { getApiBaseUrl } from "@/lib/api/config";
+import type {
+  ProfitRatioConstituentResponse,
+  ProfitRatioDailyResponse,
+} from "@/lib/api/generated/profit-ratio";
 
 type Problem = {
   code?: string;
@@ -179,5 +183,28 @@ export function getProfitRatioHistory(
   });
   return fetchJson<ApiResponse<ProfitRatioHistory>>(
     `/api/v1/profit-ratio/instruments/${encodeURIComponent(instrumentId)}/history?${query}`,
+  );
+}
+
+export function searchProfitRatioUniverse(
+  query: string,
+  signal?: AbortSignal,
+): Promise<ProfitRatioConstituentResponse> {
+  return fetchJson<ProfitRatioConstituentResponse>(
+    `/api/v1/profit-ratio/universe/search?q=${encodeURIComponent(query)}&limit=25`,
+    { signal },
+  );
+}
+
+export function getProfitRatioDaily(
+  symbol: string,
+  start: string,
+  end: string,
+  signal?: AbortSignal,
+): Promise<ProfitRatioDailyResponse> {
+  const query = new URLSearchParams({ start, end });
+  return fetchJson<ProfitRatioDailyResponse>(
+    `/api/v1/profit-ratio/symbols/${encodeURIComponent(symbol)}/daily?${query}`,
+    { signal, cache: "no-store" },
   );
 }

@@ -9,6 +9,7 @@ from sqlalchemy import Connection, engine_from_config, pool
 
 from trafriend_api.infrastructure.persistence.database import normalize_database_url
 from trafriend_api.infrastructure.persistence.models import Base
+from trafriend_api.infrastructure.persistence import profit_ratio_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

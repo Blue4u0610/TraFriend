@@ -150,6 +150,21 @@ Profit Ratio is not a universally standardized metric. Before a real provider is
 
 Profit Ratio OHLC/candlestick data is a post-MVP option. It may enter the MVP only if the chosen provider supplies sufficiently frequent observations or the system deliberately samples them. OHLC must never be fabricated from one daily point.
 
+### 6.4.1 QQQ open/close chart (2026-09-08)
+
+The first daily chart now searches only the equity holdings of a sourced current
+QQQ snapshot (not the Popular dollar-volume ranking). It shows daily OPEN/CLOSE
+Profit Ratio endpoints and stock close-to-close return, with an accessible table.
+Two endpoints are rendered as a body without fabricated intraday high/low wicks.
+Missing ratios do not hide valid price context. Reads are database-only; metadata
+search never calls a market provider. Methodology gaps and partial days are explicit.
+
+This round implements real price capture and an experimental guarded model, not a
+validated live Profit Ratio product. The Alpaca adapter has no verified historical
+float or initialized cost distribution; production-configured rows therefore carry
+null ratios and `DATA_INSUFFICIENT`, not Mock data. Numerical publication remains
+blocked on the prerequisites documented in ADR 0006. See `PROFIT_RATIO_OPERATIONS.md`.
+
 ### 6.4a Search, popular universe, and watchlist
 
 - Present separate underlying and leveraged-product searches. Both read the local

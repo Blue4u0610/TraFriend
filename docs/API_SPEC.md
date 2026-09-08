@@ -617,6 +617,36 @@ GET /api/v1/profit-ratio/instruments/{instrument_id}/bars
 
 It is not part of the initial contract. It may be specified only after source sampling frequency, bar boundaries, partial-bar behavior, and methodology are approved.
 
+### 6.4 QQQ equity search and daily OPEN/CLOSE observations
+
+```http
+GET /api/v1/profit-ratio/universe/search?q=AAPL&limit=25
+GET /api/v1/profit-ratio/symbols/AAPL/daily?start=2026-06-08&end=2026-09-08
+```
+
+Both are provider-neutral database-only reads. Search uses current sourced QQQ
+equity metadata and returns `instrument_id`, `symbol`, `name`, `as_of`, `source`.
+It is independent of Popular rank and leveraged-product availability. Current QQQ
+membership is explicitly a holdings proxy, not a historical index membership claim.
+
+Daily history accepts ordered ranges up to 366 days within available exchange-calendar
+coverage. Out-of-coverage dates return HTTP 422 with
+`PROFIT_RATIO_CALENDAR_RANGE_UNSUPPORTED`, not a vendor exception or HTTP 500.
+Response `data` includes
+`symbol`, `instrument_id`, `methodology`, `provider`, `timezone`, `as_of`, `status`,
+`rows`, and typed `gaps` (`trading_date`, `phase`, `reason_code`). Each row includes
+date, nullable decimal-string `open_ratio`, `close_ratio`, `open_price`, `close_price`,
+`price_change_return`, `ratio_change`; phase-specific market/observation UTC times;
+quality, status and per-phase reason codes. No high/low values are implied.
+
+Ratios/returns are fractions; ratio changes display as percentage-point changes.
+Missing previous price makes return null. Missing ratio inputs preserve real prices
+but return `DATA_INSUFFICIENT`. Before a phase is due, its gap is `NOT_DUE`. No zero
+substitution, interpolation, session fallback or incompatible-provenance body is
+allowed. The live input adapter currently lacks initialized cost states/dated float
+and therefore does not publish numerical ratios. No public capture/write endpoint
+is added. The exact generated contract is `services/api/openapi-profit-ratio.json`.
+
 ## 7. Service endpoints
 
 ### 7.1 Phase 1 health

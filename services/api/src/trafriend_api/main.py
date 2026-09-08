@@ -21,6 +21,7 @@ from trafriend_api.presentation.http.routers import (
     instruments,
     leveraged_etf,
     profit_ratio,
+    profit_ratio_daily,
     universe,
 )
 from trafriend_api.settings import Settings
@@ -36,6 +37,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     services = build_application_services(app_settings)
     app.state.market_data_service = services.market_data
     app.state.universe_service = services.universe
+    app.state.profit_ratio_service = services.profit_ratio
 
     app.add_middleware(
         CORSMiddleware,
@@ -143,6 +145,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(instruments.router)
     app.include_router(leveraged_etf.router)
     app.include_router(profit_ratio.router)
+    app.include_router(profit_ratio_daily.router)
     app.include_router(universe.router)
     return app
 

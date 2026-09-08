@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Iterator, Sequence
@@ -52,7 +52,7 @@ STAMP = datetime(2026, 9, 4, 21, tzinfo=UTC)
 
 @dataclass(frozen=True)
 class PostgreSQLTestContext:
-    database_url: str
+    database_url: str = field(repr=False)
     schema: str
     engine: Engine
 
@@ -443,10 +443,11 @@ def test_postgresql_ranking_import_is_separate_and_replaceable(
 def test_production_bootstrap_inspection_is_idempotent(
     postgresql_context: PostgreSQLTestContext,
 ) -> None:
-    first = inspect_bootstrap(postgresql_context.engine, "20260907_0007")
-    second = inspect_bootstrap(postgresql_context.engine, "20260907_0007")
+    assert "database_url=" not in repr(postgresql_context)
+    first = inspect_bootstrap(postgresql_context.engine, "20260908_0008")
+    second = inspect_bootstrap(postgresql_context.engine, "20260908_0008")
 
     assert first == second
-    assert first.revision == "20260907_0007"
+    assert first.revision == "20260908_0008"
     assert first.underlyings == 238
     assert first.leveraged_products == 493

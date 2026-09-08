@@ -325,6 +325,20 @@ Tests should include examples for `+2x`, `+3x`, `-1x`, `-2x`, and `-3x`; zero mo
 
 ## 8. Profit Ratio architecture
 
+The 2026-09-08 vertical slice adds `ProfitRatioService`, narrow repository/capture/
+calendar ports, `PostgreSQLProfitRatioRepository`, and a QQQ-only daily endpoint UI.
+`capture_profit_ratio` is a finite worker command, separate from ranking and
+leveraged-anchor capture. The normal read service has no provider dependency wired.
+Without DATABASE_URL, explicit deterministic Mock endpoint fixtures are used; with
+PostgreSQL, only persisted records are read. There is no live float/seed/state
+pipeline yet, so real price captures retain null ratios with explicit input gaps.
+The pure Decimal turnover-model candidate is gated and not a validated production
+method. See ADR 0006 and `PROFIT_RATIO_OPERATIONS.md` for boundaries and scheduling.
+
+The new reviewed `openapi-profit-ratio.json` snapshot and generated frontend types
+are produced by `export_profit_ratio_contract`; a deterministic drift test compares
+them with the actual FastAPI schemas. Legacy prototype types remain separate.
+
 Profit Ratio uses its own domain, application service, provider port, repository, and API routes. This allows its methodology and data source to evolve without changing the calculator.
 
 The ingestion path stores raw normalized observations with methodology versions. Read models may later aggregate observations into OHLC bars only when sampling frequency supports genuine open, high, low, and close values. Price history and Profit Ratio history remain separate series joined for presentation by an explicit interval/timezone rule.

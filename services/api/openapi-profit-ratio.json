@@ -1,0 +1,571 @@
+{
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "NasdaqConstituent": {
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "symbol",
+          "name",
+          "as_of",
+          "source"
+        ],
+        "title": "NasdaqConstituent",
+        "type": "object"
+      },
+      "ProfitRatioConstituentResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/NasdaqConstituent"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ProfitRatioConstituentResponse",
+        "type": "object"
+      },
+      "ProfitRatioDailyHistory": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/ProfitRatioGap"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "methodology": {
+            "$ref": "#/components/schemas/ProfitRatioMethodology"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ProfitRatioDailyRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "instrument_id",
+          "methodology",
+          "provider",
+          "timezone",
+          "as_of",
+          "status",
+          "rows",
+          "gaps"
+        ],
+        "title": "ProfitRatioDailyHistory",
+        "type": "object"
+      },
+      "ProfitRatioDailyResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProfitRatioDailyHistory"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ProfitRatioDailyResponse",
+        "type": "object"
+      },
+      "ProfitRatioDailyRow": {
+        "properties": {
+          "close_market_timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Market Timestamp"
+          },
+          "close_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Observed At"
+          },
+          "close_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Price"
+          },
+          "close_ratio": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Ratio"
+          },
+          "close_reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Reason Code"
+          },
+          "open_market_timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Market Timestamp"
+          },
+          "open_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Observed At"
+          },
+          "open_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Price"
+          },
+          "open_ratio": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Ratio"
+          },
+          "open_reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Reason Code"
+          },
+          "price_change_return": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Change Return"
+          },
+          "quality": {
+            "title": "Quality",
+            "type": "string"
+          },
+          "ratio_change": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio Change"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trading_date": {
+            "format": "date",
+            "title": "Trading Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trading_date",
+          "open_ratio",
+          "close_ratio",
+          "open_price",
+          "close_price",
+          "price_change_return",
+          "ratio_change",
+          "open_observed_at",
+          "close_observed_at",
+          "quality",
+          "status",
+          "open_reason_code",
+          "close_reason_code",
+          "open_market_timestamp",
+          "close_market_timestamp"
+        ],
+        "title": "ProfitRatioDailyRow",
+        "type": "object"
+      },
+      "ProfitRatioGap": {
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/ProfitRatioPhase"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "trading_date": {
+            "format": "date",
+            "title": "Trading Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trading_date",
+          "phase",
+          "reason_code"
+        ],
+        "title": "ProfitRatioGap",
+        "type": "object"
+      },
+      "ProfitRatioMethodology": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "display_name"
+        ],
+        "title": "ProfitRatioMethodology",
+        "type": "object"
+      },
+      "ProfitRatioPhase": {
+        "enum": [
+          "OPEN",
+          "CLOSE"
+        ],
+        "title": "ProfitRatioPhase",
+        "type": "string"
+      },
+      "ResponseMeta": {
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "ResponseMeta",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Mock-first market analytics API for TraFriend Phase 1.",
+    "title": "TraFriend API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/profit-ratio/symbols/{symbol}/daily": {
+      "get": {
+        "operationId": "daily_api_v1_profit_ratio_symbols__symbol__daily_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9.-]{1,16}$",
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "End",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfitRatioDailyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Daily",
+        "tags": [
+          "profit-ratio"
+        ]
+      }
+    },
+    "/api/v1/profit-ratio/universe/search": {
+      "get": {
+        "operationId": "search_api_v1_profit_ratio_universe_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfitRatioConstituentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search",
+        "tags": [
+          "profit-ratio"
+        ]
+      }
+    }
+  }
+}

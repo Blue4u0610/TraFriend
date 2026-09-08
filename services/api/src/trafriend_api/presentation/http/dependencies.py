@@ -10,18 +10,24 @@ from trafriend_api.application.ports.daily_close import (
     DailyCloseMarketDataProvider,
 )
 from trafriend_api.application.ports.market_data import LeveragedRelationshipCatalog
+from trafriend_api.application.ports.profit_ratio import ProfitRatioRepository
 from trafriend_api.application.ports.ranking import MarketRankingRepository
 from trafriend_api.application.services.daily_close_anchor import DailyCloseAnchorService
 from trafriend_api.application.services.market_data import MarketDataService
+from trafriend_api.application.services.profit_ratio import ProfitRatioService
 from trafriend_api.application.services.universe import UniverseService
 from trafriend_api.domain.errors import ProviderAuthenticationError
 from trafriend_api.infrastructure.calendar import NyseTradingCalendar
+from trafriend_api.infrastructure.calendar.profit_ratio import ProfitRatioExchangeCalendar
 from trafriend_api.infrastructure.catalog import (
     InMemoryLeveragedRelationshipCatalog,
     PostgreSQLLeveragedUniverseRepository,
 )
 from trafriend_api.infrastructure.market_data.alpaca import AlpacaMarketDataProvider
 from trafriend_api.infrastructure.market_data.mock import MockMarketDataProvider
+from trafriend_api.infrastructure.market_data.mock.profit_ratio import (
+    build_mock_profit_ratio_repository,
+)
 from trafriend_api.infrastructure.persistence import (
     InMemoryDailyCloseAnchorRepository,
     InMemoryMarketRankingRepository,
@@ -29,6 +35,9 @@ from trafriend_api.infrastructure.persistence import (
     PostgreSQLMarketRankingRepository,
 )
 from trafriend_api.infrastructure.persistence.database import create_database_engine
+from trafriend_api.infrastructure.persistence.postgresql_profit_ratio import (
+    PostgreSQLProfitRatioRepository,
+)
 from trafriend_api.presentation.http.schemas import ResponseMeta
 from trafriend_api.settings import Settings
 
@@ -37,6 +46,7 @@ from trafriend_api.settings import Settings
 class ApplicationServices:
     market_data: MarketDataService
     universe: UniverseService
+    profit_ratio: ProfitRatioService
 
 
 def build_application_services(settings: Settings) -> ApplicationServices:
@@ -47,6 +57,7 @@ def build_application_services(settings: Settings) -> ApplicationServices:
         for relationship in mock_provider.get_leveraged_relationships(instrument.id)
     }
     if settings.database_url is None:
+        profit_repository: ProfitRatioRepository = build_mock_profit_ratio_repository()
         repository: DailyCloseAnchorRepository = InMemoryDailyCloseAnchorRepository()
         catalog: LeveragedRelationshipCatalog = InMemoryLeveragedRelationshipCatalog(
             mock_relationships.values()
@@ -54,6 +65,7 @@ def build_application_services(settings: Settings) -> ApplicationServices:
         rankings: MarketRankingRepository = InMemoryMarketRankingRepository()
     else:
         engine = create_database_engine(settings.database_url.get_secret_value())
+        profit_repository = PostgreSQLProfitRatioRepository(engine)
         repository = PostgreSQLDailyCloseAnchorRepository(engine)
         catalog = PostgreSQLLeveragedUniverseRepository(engine)
         rankings = PostgreSQLMarketRankingRepository(engine)
@@ -73,6 +85,7 @@ def build_application_services(settings: Settings) -> ApplicationServices:
                 signed_leverage=relationship.leverage_factor,
             )
     return ApplicationServices(
+        profit_ratio=ProfitRatioService(profit_repository, ProfitRatioExchangeCalendar()),
         market_data=MarketDataService(
             provider=mock_provider,
             anchor_service=anchor_service,

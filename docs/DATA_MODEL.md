@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document defines TraFriend's logical persistence model. PostgreSQL persistence is implemented for immutable Daily Close Anchors, the curated leveraged-product universe, and separately sourced market rankings. Profit Ratio and overnight-diagnostic tables remain design targets.
+This document defines TraFriend's logical persistence model. PostgreSQL persistence is implemented for immutable Daily Close Anchors, the curated leveraged-product universe, separately sourced market rankings, and QQQ membership/Profit Ratio endpoint price and observation records. Numerical Profit Ratio prerequisites and overnight-diagnostic tables remain design targets.
 
 The model prioritizes:
 
@@ -342,6 +342,30 @@ Append-only audit log for activation and supersession.
 This makes corrections auditable without mutating history away.
 
 ## 6. Profit Ratio and comparison price data
+
+### 6.0 Implemented endpoint storage (migration `20260908_0008`)
+
+The tables below in 6.1-6.4 describe the broader future model. This first slice
+implements three narrower tables without changing `daily_close_anchors`:
+
+- `qqq_constituent_snapshots`: canonical instrument identity, symbol/name, issuer
+  source and effective date; immutable dated snapshots, latest snapshot for search.
+- `profit_ratio_capture_prices`: one immutable regular OPEN/CLOSE price per
+  instrument/trading date/phase, optional previous close on the current split basis,
+  provider/feed, UTC effective/observation timestamps and USD currency.
+- `profit_ratio_observations`: immutable versioned observation linked to a price
+  fact, methodology key/version, quality, reason code and nullable bounded ratio.
+  `DATA_INSUFFICIENT` requires null; `ESTIMATED` requires a ratio in [0,1].
+
+Atomic writes use transaction locks and unique constraints. Database triggers reject
+UPDATE/DELETE. A missing-input observation can append a higher numerical version
+only with identical price facts; conflicts never overwrite. PostgreSQL unscaled
+Numeric preserves Decimal results without silently rounding between memory and DB.
+No fictitious ratio high/low columns exist. Methodology catalogue, historical float,
+cost-state checkpoints and arbitrary correction workflows remain unimplemented.
+
+The first actual historical run stores current-membership price inputs and explicit
+missing-model-input observations, **not calculated historical Profit Ratios**.
 
 ### 6.1 `profit_ratio_methodologies`
 

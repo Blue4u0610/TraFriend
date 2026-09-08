@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { Badge } from "@/components/ui/badge";
 import { ProfitRatioDashboard } from "@/features/profit-ratio/profit-ratio-dashboard";
+import { defaultProfitRatioRange } from "@/features/profit-ratio/display";
 import { getDictionary } from "@/i18n/server";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -32,12 +33,8 @@ export default async function ProfitRatioPage() {
             {t.description}
           </p>
         </div>
-        <div className="rounded-xl border border-white/[0.08] bg-card/65 px-4 py-3">
-          <p className="data-label">{t.instrument}</p>
-          <p className="mt-1 font-mono text-sm">NVDA · XNAS</p>
-        </div>
       </section>
-      <ProfitRatioDashboard />
+      <ProfitRatioDashboard initialRange={defaultProfitRatioRange()} />
     </div>
   );
 }
