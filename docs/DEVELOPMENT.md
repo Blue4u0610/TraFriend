@@ -129,12 +129,14 @@ unavailable until the Alpaca adapter is selected.
 
 Migration `20260906_0002` establishes the catalog schema and its original eight
 issuer/SEC-verified relationships. Migrations `20260907_0004` and
-`20260907_0005` expand the verified 2026-09-07 snapshot to 264 active daily products
-across 75 underlyings. This covers every directly mapped daily leveraged product
-found for the 73 current September Top-100 stocks that have such a product, plus QQQ
-and SOXX. The snapshot is based on official issuer catalogs plus active Alpaca assets;
-it intentionally excludes option-income, different-index/basket, and non-daily-reset
-products and must be refreshed as issuers launch or close funds.
+`20260907_0005` cover the supported September Top-100 set. Migration
+`20260907_0007` expands the 2026-09-07 active snapshot to 493 daily products across
+238 underlyings: 236 stocks plus QQQ and SOXX. The snapshot is based on official
+issuer catalogs plus Alpaca's active U.S. asset directory. It intentionally excludes
+option-income, different-index/basket, commodity/crypto, and non-daily-reset
+products. Exact underlying or product ticker searches are therefore available for
+the complete verified snapshot, including NIO/NIOG and FORM/FOMG. The catalog must
+still be refreshed as issuers launch, close, or change funds.
 Search is metadata-only and is exposed as separate underlying and leveraged-product
 routes. The independently runnable capture command expands an underlying into all of
 its products:

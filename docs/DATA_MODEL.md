@@ -46,15 +46,16 @@ erDiagram
 
 Migration `20260906_0002` creates provider-independent `underlyings` and
 `leveraged_products` tables. Migrations `20260907_0004` and `20260907_0005` expand
-the 2026-09-07 catalog snapshot to 75 underlyings and 264 active daily leveraged
-products. It covers every directly mapped single-stock daily leveraged product found
-for 73 of the current September Top-100 underlyings, plus QQQ and SOXX. Products were
-discovered against the active Alpaca asset catalog and each relationship was checked
-against the official Corgi, Defiance, Direxion, GraniteShares, Leverage Shares,
+the initial and September Top-100 coverage; migration `20260907_0007` expands the
+2026-09-07 catalog snapshot to 238 underlyings and 493 active daily leveraged
+products. The underlyings are 236 stocks plus QQQ and SOXX. Products were discovered
+against the active Alpaca asset catalog and each relationship was checked against
+the official Corgi, Defiance, Direxion, GraniteShares, KraneShares, Leverage Shares,
 ProShares, T-REX, or Tradr issuer catalog. This remains a dated, reproducible coverage
 snapshot rather than a claim that an unmaintained database will stay complete as new
-funds launch. Option-income products, different-index/basket products, and non-daily
-reset products are excluded. Relationships are never inferred from ticker names.
+funds launch. Option-income products, different-index/basket products,
+commodity/crypto products, and non-daily-reset products are excluded. Relationships
+are never inferred from ticker names.
 
 ### 4.1 `underlyings`
 

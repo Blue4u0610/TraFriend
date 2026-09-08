@@ -378,9 +378,29 @@ def test_postgresql_universe_seed_supports_search_and_multiple_products(
     product_search = catalog.search_leveraged_products("MSTX", 10)
     assert [item.symbol for item in product_search] == ["MSTX"]
 
+    nio_search = catalog.search_underlyings("NIO", 10)
+    assert nio_search[0].symbol == "NIO"
+    nio_products = catalog.get_leveraged_relationships("ins_nio_xnys")
+    assert {
+        item.leveraged_product.symbol: item.leverage_factor
+        for item in nio_products
+    } == {"NIOG": Decimal("2")}
+
+    form_search = catalog.search_underlyings("FORM", 10)
+    assert form_search[0].symbol == "FORM"
+    fomg_search = catalog.search_leveraged_products("FOMG", 10)
+    assert [item.symbol for item in fomg_search] == ["FOMG"]
+    assert catalog.get_relationship("rel_form_fomg_2x").underlying.symbol == "FORM"
+
     with postgresql_context.engine.connect() as connection:
-        assert connection.scalar(text("SELECT count(*) FROM underlyings")) == 75
-        assert connection.scalar(text("SELECT count(*) FROM leveraged_products")) == 264
+        assert connection.scalar(text("SELECT count(*) FROM underlyings")) == 238
+        assert connection.scalar(text("SELECT count(*) FROM leveraged_products")) == 493
+        assert connection.scalar(
+            text(
+                "SELECT count(*) FROM leveraged_products "
+                "WHERE active AND authoritative_source <> ''"
+            )
+        ) == 493
 
     goog_relationships = catalog.get_leveraged_relationships("ins_goog_xnas")
     assert [item.leveraged_product.symbol for item in goog_relationships] == [
@@ -423,10 +443,10 @@ def test_postgresql_ranking_import_is_separate_and_replaceable(
 def test_production_bootstrap_inspection_is_idempotent(
     postgresql_context: PostgreSQLTestContext,
 ) -> None:
-    first = inspect_bootstrap(postgresql_context.engine, "20260907_0006")
-    second = inspect_bootstrap(postgresql_context.engine, "20260907_0006")
+    first = inspect_bootstrap(postgresql_context.engine, "20260907_0007")
+    second = inspect_bootstrap(postgresql_context.engine, "20260907_0007")
 
     assert first == second
-    assert first.revision == "20260907_0006"
-    assert first.underlyings == 75
-    assert first.leveraged_products == 264
+    assert first.revision == "20260907_0007"
+    assert first.underlyings == 238
+    assert first.leveraged_products == 493

@@ -280,6 +280,10 @@ Alpaca or another market-data provider. The first route is retained as a combine
 compatibility search. The UI uses the two scoped routes so an underlying result is
 never confused with a leveraged-product result. Selecting a leveraged product still
 resolves to its canonical underlying and complete active relationship set.
+The production PostgreSQL catalog includes the complete verified 2026-09-07 snapshot
+of active daily single-stock products; exact searches such as `NIO`, `NIOG`, `FORM`,
+and `FOMG` return their source-attributed relationship metadata after migration
+`20260907_0007` is applied.
 
 ### 4.5 Get an underlying workspace without capture
 

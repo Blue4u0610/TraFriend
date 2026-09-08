@@ -268,6 +268,14 @@ complete pairs, and returns an explicit unavailable row for missing children. Wi
 PostgreSQL configuration, the Mock adapter is read-only for this workflow so it
 cannot contaminate persisted real anchors. The browser never calls Alpaca directly.
 
+The provider-independent catalog is populated by immutable, source-attributed
+snapshot migrations. Migration `20260907_0007` broadens search beyond Popular to
+the complete verified 2026-09-07 daily single-stock universe: 236 stock underlyings,
+QQQ and SOXX, and 493 leveraged products. Candidate discovery may use Alpaca's active
+asset directory, but inclusion still requires an explicit daily factor and an
+official issuer source. Search never infers a relationship or calls Alpaca per
+keystroke.
+
 If the expected completed-session version is unavailable, partial, stale, mixed-date, or lagging, the application returns a typed data-availability error. It must not silently substitute a prior session. A future explicitly labeled historical calculator may allow the caller to choose an older trading date.
 
 ### 6.4 Separate overnight diagnostics
