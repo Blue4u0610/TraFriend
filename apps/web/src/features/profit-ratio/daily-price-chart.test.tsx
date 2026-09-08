@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "@/i18n/locale-provider";
 import type { ProfitRatioDailyRow } from "@/lib/api/generated/profit-ratio";
 
-import { DailyPriceChart, DailyReturnChart } from "./daily-price-chart";
+import { CombinedDailyChart, DailyPriceChart, DailyReturnChart } from "./daily-price-chart";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
@@ -25,6 +25,40 @@ const row: ProfitRatioDailyRow = {
 afterEach(cleanup);
 
 describe("independent genuine daily price charts", () => {
+  it("overlays selected candles, return trend and Profit Ratio trend in one synchronized SVG", () => {
+    const next = {
+      ...row,
+      trading_date: "2026-09-08",
+      open_ratio: "0.40",
+      close_ratio: "0.45",
+      price_change_return: "-0.01",
+    };
+    const view = render(<LocaleProvider initialLocale="en"><CombinedDailyChart
+      rows={[{ ...row, open_ratio: "0.35", close_ratio: "0.42" }, next]}
+      layers={{ price: true, returns: true, ratio: true }}
+    /></LocaleProvider>);
+    expect(screen.getAllByRole("img", { name: /Synchronized daily chart/ })).toHaveLength(1);
+    expect(view.container.querySelectorAll("svg")).toHaveLength(1);
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(2);
+    expect(view.container.querySelectorAll("[data-daily-return]")).toHaveLength(2);
+    expect(view.container.querySelectorAll("[data-daily-return-line]")).toHaveLength(1);
+    expect(view.container.querySelectorAll("[data-ratio-body]")).toHaveLength(2);
+    expect(view.container.querySelectorAll("[data-ratio-line]")).toHaveLength(1);
+  });
+
+  it("keeps price candles visible and explains unavailable Profit Ratio in the same chart", () => {
+    const view = render(<LocaleProvider initialLocale="en"><CombinedDailyChart
+      rows={[row]}
+      layers={{ price: true, returns: false, ratio: true }}
+    /></LocaleProvider>);
+    expect(screen.getByRole("img", { name: /Synchronized daily chart/ })).toBeTruthy();
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll("[data-ratio-body], [data-ratio-line], [data-ratio-point]"),
+    ).toHaveLength(0);
+    expect(screen.getByText(/Profit Ratio is unavailable/)).toBeTruthy();
+  });
+
   it("draws genuine high / low wicks even when every Profit Ratio is unavailable", async () => {
     const user = userEvent.setup();
     const view = render(<LocaleProvider initialLocale="en"><DailyPriceChart rows={[row]} /></LocaleProvider>);

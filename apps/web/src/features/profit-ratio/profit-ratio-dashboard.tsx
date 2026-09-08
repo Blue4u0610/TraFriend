@@ -14,12 +14,11 @@ import { useLocale } from "@/i18n/locale-provider";
 import { getProfitRatioDaily, searchProfitRatioUniverse } from "@/lib/api/client";
 import type { ProfitRatioConstituent, ProfitRatioDailyHistory } from "@/lib/api/generated/profit-ratio";
 
-import { DailyPriceChart, DailyReturnChart } from "./daily-price-chart";
-import { DailyRatioChart, hasRatioProvenanceMismatch } from "./daily-ratio-chart";
+import { CombinedDailyChart, type DailyChartLayers } from "./daily-price-chart";
+import { hasRatioProvenanceMismatch } from "./daily-ratio-chart";
 import { formatRatioPrice, formatRatioValue, type ProfitRatioDateRange } from "./display";
 
 type Labels = Dictionary["profitRatio"];
-type ChartLayers = { price: boolean; returns: boolean; ratio: boolean };
 
 function stateLabel(value: string, t: Labels) {
   const key = value.toUpperCase();
@@ -38,7 +37,7 @@ function stateLabel(value: string, t: Labels) {
   return t.unavailable;
 }
 
-function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; range: ProfitRatioDateRange; onRetry: () => void; layers: ChartLayers }) {
+function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; range: ProfitRatioDateRange; onRetry: () => void; layers: DailyChartLayers }) {
   const { dictionary: { profitRatio: t } } = useLocale();
   const [result, setResult] = useState<ProfitRatioDailyHistory | null>(null);
   const [failed, setFailed] = useState(false);
@@ -59,8 +58,6 @@ function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; rang
   if (!result) return <div role="status" aria-label={t.loading} className="space-y-3"><p className="text-sm text-muted-foreground">{symbol} · {t.loading}</p><Skeleton className="h-80 rounded-2xl" /></div>;
 
   const rows = [...result.rows].sort((a, b) => a.trading_date.localeCompare(b.trading_date));
-  const hasRatios = rows.some((row) => row.open_ratio !== null || row.close_ratio !== null);
-  const hasPrices = rows.some((row) => row.open_price !== null || row.close_price !== null);
   const priceSources = [...new Set(rows.filter((row) => row.price_provider).map((row) => `${row.price_provider} / ${row.price_source_feed ?? "—"} · ${stateLabel(row.price_quality ?? "UNAVAILABLE", t)}`))];
   const isMock = result.provider.toLowerCase().includes("mock") || rows.some((row) => row.price_provider?.toLowerCase().includes("mock"));
   return <div className="space-y-4">
@@ -73,19 +70,12 @@ function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; rang
       <CardContent className="space-y-6">
         {rows.length === 0 && <p role="status" className="text-sm leading-6 text-muted-foreground">{t.emptySeries}</p>}
         {!layers.price && !layers.returns && !layers.ratio && <p className="text-sm text-muted-foreground">{t.selectChartLayer}</p>}
-        {layers.price && <section aria-label={t.priceDailyK}>
-          <h3 className="mb-2 font-semibold">{t.priceDailyK}</h3>
-          {priceSources.length > 0 && <p className="mb-3 text-xs leading-6 text-muted-foreground">{t.source}: {priceSources.join(" · ")}</p>}
-          <DailyPriceChart rows={rows} />
-        </section>}
-        {layers.returns && <section aria-label={t.dailyReturn}>
-          <h3 className="mb-2 font-semibold">{t.dailyReturn}</h3><DailyReturnChart rows={rows} />
-        </section>}
-        {layers.ratio && <section aria-label={t.profitRatio}>
-          <div className="mb-2 flex flex-wrap items-center gap-3"><h3 className="font-semibold">{t.dailyChart}</h3><Badge variant="outline" className="border-primary/25 text-primary">{stateLabel(result.status, t)}</Badge></div>
-          <p className="mb-3 text-xs leading-6 text-muted-foreground">{result.methodology.display_name} · {result.methodology.id} / v{result.methodology.version}<br />{t.source}: {result.provider}</p>
-          {hasRatios ? <DailyRatioChart rows={rows} /> : <p role="status" className="rounded-lg border border-white/[0.08] p-5 text-sm leading-6 text-muted-foreground">{hasPrices ? t.ratiosUnavailable : t.ratiosNotCaptured}</p>}
-          {result.gaps.length > 0 && <details className="mt-4 text-sm text-amber-200">
+        {(layers.price || layers.returns || layers.ratio) && rows.length > 0 && <section aria-label={t.combinedChart}>
+          <div className="mb-2 flex flex-wrap items-center gap-3"><h3 className="font-semibold">{t.combinedChart}</h3>{layers.ratio && <Badge variant="outline" className="border-primary/25 text-primary">{stateLabel(result.status, t)}</Badge>}</div>
+          {layers.price && priceSources.length > 0 && <p className="mb-2 text-xs leading-6 text-muted-foreground">{t.priceSource}: {priceSources.join(" · ")}</p>}
+          {layers.ratio && <p className="mb-3 text-xs leading-6 text-muted-foreground">{t.ratioSource}: {result.methodology.display_name} · {result.methodology.id} / v{result.methodology.version} · {result.provider}</p>}
+          <CombinedDailyChart rows={rows} layers={layers} />
+          {layers.ratio && result.gaps.length > 0 && <details className="mt-4 text-sm text-amber-200">
             <summary className="cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-primary">{t.gaps} ({result.gaps.length})</summary>
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">{result.gaps.map((gap) => <li key={`${gap.trading_date}:${gap.phase}:${gap.reason_code}`}>
               {gap.trading_date} · {gap.phase === "OPEN" ? t.openRatio : t.closeRatio} · {gap.reason_code === "NOT_DUE" ? t.pending : gap.reason_code === "NOT_CAPTURED" ? t.notCaptured : t.insufficient} <span className="font-mono text-xs">({gap.reason_code})</span>
@@ -130,7 +120,7 @@ export function ProfitRatioDashboard({ initialRange }: { initialRange: ProfitRat
   const [range, setRange] = useState(initialRange);
   const [rangeError, setRangeError] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [layers, setLayers] = useState<ChartLayers>({ price: true, returns: false, ratio: false });
+  const [layers, setLayers] = useState<DailyChartLayers>({ price: true, returns: false, ratio: false });
   const trimmedQuery = query.trim();
 
   useEffect(() => {

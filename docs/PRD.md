@@ -167,7 +167,8 @@ blocked on the prerequisites documented in ADR 0006. See `PROFIT_RATIO_OPERATION
 
 The price-first correction makes complete daily stock OHLC the default chart after
 selection. Price candles, daily price return, and Profit Ratio are independently
-selectable panels with separate USD/percentage scales. Genuine daily highs/lows
+selectable layers in one synchronized trading-date plot with explicit USD and
+percentage scales. Genuine daily highs/lows
 come from provider bars; they are never derived from two endpoint prices. A candle
 requires the completed regular session plus publication delay. Missing or partial
 price days remain explicit gaps. Missing Profit Ratio affects only its optional

@@ -4,7 +4,8 @@
 
 The QQQ-only search and charts read PostgreSQL through dedicated public read
 endpoints. Selecting a stock displays complete price OHLC candles by default.
-Price daily K, daily return, and Profit Ratio panels are independently selectable.
+Price daily K, daily return, and Profit Ratio are independently selectable layers in
+one synchronized trading-date chart with explicit USD and percentage scales.
 Two ratio endpoint values can form a body but cannot supply intraday ratio high/low.
 A missing ratio does not hide stock search, valid price candles, or daily returns.
 An explicit Mock fixture is used only when no PostgreSQL configuration is supplied.

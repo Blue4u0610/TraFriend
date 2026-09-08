@@ -115,11 +115,11 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     const table = await screen.findByRole("table");
     expect(within(table).getAllByText("—")).toHaveLength(2);
     expect(within(table).getByText("+2.00%")).toBeTruthy();
-    expect(screen.getByRole("img", { name: /Daily stock candlesticks/ })).toBeTruthy();
+    expect(screen.getByRole("img", { name: /Synchronized daily chart/ })).toBeTruthy();
     expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
     fireEvent.click(screen.getByRole("checkbox", { name: "Profit Ratio" }));
-    expect(screen.getByText(/Price data is available, but the model/)).toBeTruthy();
-    expect(screen.queryByRole("img", { name: /Daily opening and closing Profit Ratio/ })).toBeNull();
+    expect(screen.getByText(/Profit Ratio is unavailable/)).toBeTruthy();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
     expect(screen.queryByText(/DEMO \/ MOCK/)).toBeNull();
     expect(screen.getByText(/VALIDATED_PRIOR_DISTRIBUTION_MISSING/)).toBeTruthy();
   });
@@ -187,7 +187,7 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "获利比例" }));
     expect(screen.getByRole("columnheader", { name: "开盘获利比" })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: "股票当日涨跌幅" })).toBeTruthy();
-    expect(screen.getByText(/没有上下影线/)).toBeTruthy();
+    expect(screen.getByText(/共享同一条交易日期轴/)).toBeTruthy();
   });
 
   it("toggles independent chart layers without fetching again and keeps selection across stocks", async () => {
@@ -198,7 +198,7 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
     expect(view.container.querySelectorAll("[data-daily-return], [data-ratio-body]")).toHaveLength(0);
     fireEvent.click(screen.getByRole("checkbox", { name: "Stock daily change" }));
-    expect(screen.getByRole("img", { name: /separate percentage axis/ })).toBeTruthy();
+    expect(screen.getAllByRole("img", { name: /Synchronized daily chart/ })).toHaveLength(1);
     expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
     fireEvent.click(screen.getByRole("checkbox", { name: "Profit Ratio" }));
     expect(view.container.querySelectorAll("[data-ratio-body]")).toHaveLength(1);
@@ -228,7 +228,7 @@ describe("QQQ daily Profit Ratio dashboard", () => {
   it("can hide every chart without losing the data table or doing another read", async () => {
     renderDashboard(); await selectStock(); await screen.findByRole("table");
     fireEvent.click(screen.getByRole("checkbox", { name: "Price daily K" }));
-    expect(screen.getByText(/Choose a chart above/)).toBeTruthy();
+    expect(screen.getByText(/Choose one or more layers above/)).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByRole("table")).toBeTruthy();
     expect(daily).toHaveBeenCalledTimes(1);

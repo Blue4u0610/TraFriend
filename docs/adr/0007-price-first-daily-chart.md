@@ -1,4 +1,4 @@
-# ADR 0007: Price-first daily charts with independent optional indicators
+# ADR 0007: Price-first daily chart with independent optional layers
 
 Date: 2026-09-08
 
@@ -8,8 +8,10 @@ Status: approved product correction requested by the user; implementation in thi
 
 Selecting a QQQ constituent must not depend on Profit Ratio model inputs. Search
 reads stored metadata; the default chart displays genuine completed-session stock
-OHLC. Daily return and Profit Ratio are independently selectable panels with separate
-scales. A missing ratio displays an explicit unavailable message only in its panel.
+OHLC. Daily return and Profit Ratio are independently selectable layers in one
+synchronized trading-date chart. Price keeps a USD scale, daily return keeps a dynamic
+percentage scale, and Profit Ratio keeps its fixed 0–100% scale. A missing ratio displays
+an explicit unavailable message without suppressing the other selected layers.
 No synthetic OHLC, ratio zero, interpolation or previous-session substitution is allowed.
 
 Independent `market_daily_price_bars` preserves completed daily price facts and
@@ -52,7 +54,7 @@ change nor a user-selected indicator approves a numerical Profit Ratio methodolo
 Tests cover positive/bounded/ordered OHLC, no incomplete-session candle, explicit gaps,
 same-date enforcement, immutable retries/conflicts, provider partial failures, metadata
 initialization without price dependencies, DB-only reads, and independently selectable
-frontend panels. Real validation must distinguish localhost from the deployed database.
+frontend layers in one plot. Real validation must distinguish localhost from the deployed database.
 
 Sources:
 
