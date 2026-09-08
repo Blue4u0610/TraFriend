@@ -165,6 +165,20 @@ float or initialized cost distribution; production-configured rows therefore car
 null ratios and `DATA_INSUFFICIENT`, not Mock data. Numerical publication remains
 blocked on the prerequisites documented in ADR 0006. See `PROFIT_RATIO_OPERATIONS.md`.
 
+The price-first correction makes complete daily stock OHLC the default chart after
+selection. Price candles, daily price return, and Profit Ratio are independently
+selectable panels with separate USD/percentage scales. Genuine daily highs/lows
+come from provider bars; they are never derived from two endpoint prices. A candle
+requires the completed regular session plus publication delay. Missing or partial
+price days remain explicit gaps. Missing Profit Ratio affects only its optional
+panel and must not prevent metadata search or price chart display.
+
+Deployment bootstrap initializes an empty QQQ search catalog from the verified,
+dated 2026-09-04 normalized issuer snapshot, without vendor calls or price/model
+prerequisites. It preserves existing snapshots. Explicit issuer refresh remains
+necessary to track membership changes. Historical OHLC is a separate idempotent
+worker capture; build migrations and public search never fetch market prices.
+
 ### 6.4a Search, popular universe, and watchlist
 
 - Present separate underlying and leveraged-product searches. Both read the local

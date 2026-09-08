@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from trafriend_api.application.ports.profit_ratio import ProfitRatioRepository
+from trafriend_api.application.services.daily_price import DailyPriceCaptureService
 from trafriend_api.application.services.profit_ratio import ProfitRatioService
 from trafriend_api.domain.errors import MarketDataProviderError
 from trafriend_api.domain.profit_ratio_daily import ProfitRatioConflictError, ProfitRatioPhase
@@ -21,6 +22,7 @@ from trafriend_api.infrastructure.catalog.qqq_constituents import fetch_qqq_cons
 from trafriend_api.infrastructure.market_data.alpaca.profit_ratio import (
     AlpacaProfitRatioCaptureProvider,
 )
+from trafriend_api.infrastructure.persistence.daily_price import PostgreSQLDailyPriceRepository
 from trafriend_api.infrastructure.persistence.database import create_database_engine
 from trafriend_api.infrastructure.persistence.models import UnderlyingRecord
 from trafriend_api.infrastructure.persistence.postgresql_profit_ratio import (
@@ -94,6 +96,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         calendar = ProfitRatioExchangeCalendar()
         sessions = calendar.sessions(start, end)
+        ratio_prefetch_failed = False
         if (
             sessions
             and end < today
@@ -104,10 +107,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 for phase in ProfitRatioPhase
             )
         ):
-            provider.prime_history(
-                [item.symbol for item in constituents], sessions[0].previous_trading_date, end
-            )
-        service = ProfitRatioService(repository, calendar, provider)
+            try:
+                provider.prime_history(
+                    [item.symbol for item in constituents], sessions[0].previous_trading_date, end
+                )
+            except MarketDataProviderError:
+                # Report missing ratio inputs per phase without repeating a failed
+                # batch for every day, and still attempt independent price capture.
+                ratio_prefetch_failed = True
+        service = ProfitRatioService(
+            repository, calendar, None if ratio_prefetch_failed else provider
+        )
         reports = [
             service.capture(
                 session.trading_date, phase, retry_insufficient=arguments.retry_insufficient
@@ -115,7 +125,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             for session in sessions
             for phase in ProfitRatioPhase
         ]
-        statuses = [report.status for report in reports]
+        # The existing external OPEN/CLOSE runner also maintains completed price
+        # candles. Missing ratio prerequisites must not suppress independent OHLC.
+        price_report = DailyPriceCaptureService(
+            repository, PostgreSQLDailyPriceRepository(engine), provider, calendar
+        ).capture(start, end)
+        statuses = [report.status for report in reports] + [price_report.status]
         print(
             json.dumps(
                 {
@@ -140,6 +155,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "unavailable": sum(report.unavailable for report in reports),
                     "conflicts": sum(report.conflicts for report in reports),
                     "reports": [asdict(report) for report in reports],
+                    "daily_prices": asdict(price_report),
                 },
                 default=str,
             )

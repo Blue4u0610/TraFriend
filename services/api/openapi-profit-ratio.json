@@ -204,6 +204,30 @@
             ],
             "title": "Close Reason Code"
           },
+          "high_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High Price"
+          },
+          "low_price": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low Price"
+          },
           "open_market_timestamp": {
             "anyOf": [
               {
@@ -263,6 +287,17 @@
             ],
             "title": "Open Reason Code"
           },
+          "price_adjustment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Adjustment"
+          },
           "price_change_return": {
             "anyOf": [
               {
@@ -274,6 +309,79 @@
               }
             ],
             "title": "Price Change Return"
+          },
+          "price_market_timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Market Timestamp"
+          },
+          "price_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Observed At"
+          },
+          "price_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Provider"
+          },
+          "price_quality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Quality"
+          },
+          "price_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Scope"
+          },
+          "price_source_feed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Source Feed"
+          },
+          "price_status": {
+            "default": "NOT_CAPTURED",
+            "title": "Price Status",
+            "type": "string"
           },
           "quality": {
             "title": "Quality",

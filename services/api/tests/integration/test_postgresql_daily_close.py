@@ -29,6 +29,7 @@ from trafriend_api.domain.daily_close import (
 )
 from trafriend_api.domain.errors import AnchorConflictError
 from trafriend_api.domain.models import LeveragedRelationship
+from trafriend_api.domain.profit_ratio_daily import NasdaqConstituent
 from trafriend_api.domain.universe import (
     MarketRanking,
     RankingPeriodStatus,
@@ -43,6 +44,9 @@ from trafriend_api.infrastructure.market_data.mock import MockMarketDataProvider
 from trafriend_api.infrastructure.persistence import (
     PostgreSQLDailyCloseAnchorRepository,
     PostgreSQLMarketRankingRepository,
+)
+from trafriend_api.infrastructure.persistence.postgresql_profit_ratio import (
+    PostgreSQLProfitRatioRepository,
 )
 from trafriend_api.scripts.bootstrap_production import inspect_bootstrap
 
@@ -444,10 +448,17 @@ def test_production_bootstrap_inspection_is_idempotent(
     postgresql_context: PostgreSQLTestContext,
 ) -> None:
     assert "database_url=" not in repr(postgresql_context)
-    first = inspect_bootstrap(postgresql_context.engine, "20260908_0008")
-    second = inspect_bootstrap(postgresql_context.engine, "20260908_0008")
+    with pytest.raises(ValueError, match="QQQ search metadata is not initialized"):
+        inspect_bootstrap(postgresql_context.engine, "20260908_0009")
+    PostgreSQLProfitRatioRepository(postgresql_context.engine).save_constituents((
+        NasdaqConstituent("ins_bootstrap_test", "BOOTTEST", "Synthetic QQQ stock",
+                          date(2026, 9, 4), "mock-bootstrap"),
+    ))
+    first = inspect_bootstrap(postgresql_context.engine, "20260908_0009")
+    second = inspect_bootstrap(postgresql_context.engine, "20260908_0009")
 
     assert first == second
-    assert first.revision == "20260908_0008"
+    assert first.revision == "20260908_0009"
     assert first.underlyings == 238
     assert first.leveraged_products == 493
+    assert first.qqq_constituents == 1

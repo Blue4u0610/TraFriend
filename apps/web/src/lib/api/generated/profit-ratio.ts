@@ -50,6 +50,16 @@ export type ProfitRatioDailyRow = {
   close_reason_code: string | null;
   open_market_timestamp: string | null;
   close_market_timestamp: string | null;
+  high_price?: string | null;
+  low_price?: string | null;
+  price_status?: string;
+  price_provider?: string | null;
+  price_source_feed?: string | null;
+  price_observed_at?: string | null;
+  price_market_timestamp?: string | null;
+  price_quality?: string | null;
+  price_adjustment?: string | null;
+  price_scope?: string | null;
 };
 
 export type ProfitRatioGap = {

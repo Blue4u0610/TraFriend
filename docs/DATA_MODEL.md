@@ -343,6 +343,22 @@ This makes corrections auditable without mutating history away.
 
 ## 6. Profit Ratio and comparison price data
 
+### Independent daily candles (migration `20260908_0009`)
+
+`market_daily_price_bars` implements the independent price series. It stores canonical
+instrument identity, trading date, raw Decimal OHLC, optional prior-session close on
+the current split basis, calendar open/close instants, original provider daily-bar
+timestamp, UTC acquisition time, USD/provider/feed/quality, adjustment and price scope.
+Prices are finite and positive with `low <= open/close <= high`. Only completed
+sessions are eligible. Unique `(instrument_id, trading_date)`, transaction locks and
+mutation-rejection triggers enforce immutable idempotency; conflicting facts fail
+explicitly. Existing anchor and endpoint-price rows are not modified or backfilled
+with guessed highs/lows. No ratio foreign key is required to store or display a bar.
+
+Deployment may seed only the source-attributed normalized QQQ identity snapshot,
+never market prices or fake observations. The initializer runs outside migrations,
+only on an empty catalog, preserving the original snapshot date and all existing data.
+
 ### 6.0 Implemented endpoint storage (migration `20260908_0008`)
 
 The tables below in 6.1-6.4 describe the broader future model. This first slice

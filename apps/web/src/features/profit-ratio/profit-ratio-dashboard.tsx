@@ -14,10 +14,12 @@ import { useLocale } from "@/i18n/locale-provider";
 import { getProfitRatioDaily, searchProfitRatioUniverse } from "@/lib/api/client";
 import type { ProfitRatioConstituent, ProfitRatioDailyHistory } from "@/lib/api/generated/profit-ratio";
 
+import { DailyPriceChart, DailyReturnChart } from "./daily-price-chart";
 import { DailyRatioChart, hasRatioProvenanceMismatch } from "./daily-ratio-chart";
 import { formatRatioPrice, formatRatioValue, type ProfitRatioDateRange } from "./display";
 
 type Labels = Dictionary["profitRatio"];
+type ChartLayers = { price: boolean; returns: boolean; ratio: boolean };
 
 function stateLabel(value: string, t: Labels) {
   const key = value.toUpperCase();
@@ -36,7 +38,7 @@ function stateLabel(value: string, t: Labels) {
   return t.unavailable;
 }
 
-function DailyHistory({ symbol, range, onRetry }: { symbol: string; range: ProfitRatioDateRange; onRetry: () => void }) {
+function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; range: ProfitRatioDateRange; onRetry: () => void; layers: ChartLayers }) {
   const { dictionary: { profitRatio: t } } = useLocale();
   const [result, setResult] = useState<ProfitRatioDailyHistory | null>(null);
   const [failed, setFailed] = useState(false);
@@ -54,29 +56,42 @@ function DailyHistory({ symbol, range, onRetry }: { symbol: string; range: Profi
     <p className="my-3 text-sm text-muted-foreground">{t.genericError}</p>
     <Button variant="outline" onClick={onRetry}>{t.retry}</Button>
   </div>;
-  if (!result) return <div role="status" aria-label={t.loading}><Skeleton className="h-80 rounded-2xl" /><p className="sr-only">{t.loading}</p></div>;
+  if (!result) return <div role="status" aria-label={t.loading} className="space-y-3"><p className="text-sm text-muted-foreground">{symbol} · {t.loading}</p><Skeleton className="h-80 rounded-2xl" /></div>;
 
   const rows = [...result.rows].sort((a, b) => a.trading_date.localeCompare(b.trading_date));
   const hasRatios = rows.some((row) => row.open_ratio !== null || row.close_ratio !== null);
   const hasPrices = rows.some((row) => row.open_price !== null || row.close_price !== null);
+  const priceSources = [...new Set(rows.filter((row) => row.price_provider).map((row) => `${row.price_provider} / ${row.price_source_feed ?? "—"} · ${stateLabel(row.price_quality ?? "UNAVAILABLE", t)}`))];
+  const isMock = result.provider.toLowerCase().includes("mock") || rows.some((row) => row.price_provider?.toLowerCase().includes("mock"));
   return <div className="space-y-4">
     <Card className="surface-glow border-white/[0.08] bg-card/85">
       <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><CardDescription className="data-label mb-2">{t.dailyChart}</CardDescription><CardTitle role="heading" aria-level={2} className="text-2xl">{symbol}</CardTitle></div>
-          <Badge variant="outline" className="border-primary/25 text-primary">{stateLabel(result.status, t)}</Badge>
-        </div>
-        <p className="text-xs leading-6 text-muted-foreground">{result.methodology.display_name} · {result.methodology.id} / v{result.methodology.version}<br />{t.source}: {result.provider} · {result.timezone} · {t.updated}: {result.as_of}</p>
-        {result.provider.toLowerCase().includes("mock") && <p role="status" className="text-sm text-amber-200">{t.mockNotice}</p>}
+        <CardDescription className="data-label">{t.stockHistory}</CardDescription><CardTitle role="heading" aria-level={2} className="text-2xl">{symbol}</CardTitle>
+        <p className="text-xs leading-6 text-muted-foreground">{result.timezone} · {t.updated}: {result.as_of}</p>
+        {isMock && <p role="status" className="text-sm text-amber-200">{t.mockNotice}</p>}
       </CardHeader>
-      <CardContent>
-        {hasRatios ? <DailyRatioChart rows={rows} /> : <p role="status" className="rounded-lg border border-white/[0.08] p-5 text-sm leading-6 text-muted-foreground">{hasPrices ? t.ratiosUnavailable : t.emptySeries}</p>}
-        {result.gaps.length > 0 && <details className="mt-4 text-sm text-amber-200">
-          <summary className="cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-primary">{t.gaps} ({result.gaps.length})</summary>
-          <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">{result.gaps.map((gap) => <li key={`${gap.trading_date}:${gap.phase}:${gap.reason_code}`}>
-            {gap.trading_date} · {gap.phase === "OPEN" ? t.openRatio : t.closeRatio} · {gap.reason_code === "NOT_DUE" ? t.pending : gap.reason_code === "NOT_CAPTURED" ? t.notCaptured : t.insufficient} <span className="font-mono text-xs">({gap.reason_code})</span>
-          </li>)}</ul>
-        </details>}
+      <CardContent className="space-y-6">
+        {rows.length === 0 && <p role="status" className="text-sm leading-6 text-muted-foreground">{t.emptySeries}</p>}
+        {!layers.price && !layers.returns && !layers.ratio && <p className="text-sm text-muted-foreground">{t.selectChartLayer}</p>}
+        {layers.price && <section aria-label={t.priceDailyK}>
+          <h3 className="mb-2 font-semibold">{t.priceDailyK}</h3>
+          {priceSources.length > 0 && <p className="mb-3 text-xs leading-6 text-muted-foreground">{t.source}: {priceSources.join(" · ")}</p>}
+          <DailyPriceChart rows={rows} />
+        </section>}
+        {layers.returns && <section aria-label={t.dailyReturn}>
+          <h3 className="mb-2 font-semibold">{t.dailyReturn}</h3><DailyReturnChart rows={rows} />
+        </section>}
+        {layers.ratio && <section aria-label={t.profitRatio}>
+          <div className="mb-2 flex flex-wrap items-center gap-3"><h3 className="font-semibold">{t.dailyChart}</h3><Badge variant="outline" className="border-primary/25 text-primary">{stateLabel(result.status, t)}</Badge></div>
+          <p className="mb-3 text-xs leading-6 text-muted-foreground">{result.methodology.display_name} · {result.methodology.id} / v{result.methodology.version}<br />{t.source}: {result.provider}</p>
+          {hasRatios ? <DailyRatioChart rows={rows} /> : <p role="status" className="rounded-lg border border-white/[0.08] p-5 text-sm leading-6 text-muted-foreground">{hasPrices ? t.ratiosUnavailable : t.ratiosNotCaptured}</p>}
+          {result.gaps.length > 0 && <details className="mt-4 text-sm text-amber-200">
+            <summary className="cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-primary">{t.gaps} ({result.gaps.length})</summary>
+            <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">{result.gaps.map((gap) => <li key={`${gap.trading_date}:${gap.phase}:${gap.reason_code}`}>
+              {gap.trading_date} · {gap.phase === "OPEN" ? t.openRatio : t.closeRatio} · {gap.reason_code === "NOT_DUE" ? t.pending : gap.reason_code === "NOT_CAPTURED" ? t.notCaptured : t.insufficient} <span className="font-mono text-xs">({gap.reason_code})</span>
+            </li>)}</ul>
+          </details>}
+        </section>}
       </CardContent>
     </Card>
     {rows.length > 0 && <Card className="border-white/[0.08] bg-card/85">
@@ -85,21 +100,24 @@ function DailyHistory({ symbol, range, onRetry }: { symbol: string; range: Profi
         <Table>
           <caption className="pb-3 text-left text-xs text-muted-foreground">{t.returnExplanation}</caption>
           <TableHeader><TableRow>
-            {[t.date, t.openRatio, t.closeRatio, t.openPrice, t.closingPrice, t.dailyReturn, t.quality].map((heading) => <TableHead key={heading}>{heading}</TableHead>)}
+            {[t.date, t.openPrice, t.highPrice, t.lowPrice, t.closingPrice, t.dailyReturn, t.priceQuality, t.openRatio, t.closeRatio, t.ratioQuality].map((heading) => <TableHead key={heading}>{heading}</TableHead>)}
           </TableRow></TableHeader>
           <TableBody>{rows.map((row) => <TableRow key={row.trading_date}>
             <TableCell className="font-mono">{row.trading_date}</TableCell>
-            <TableCell className="font-mono" title={row.open_observed_at ?? undefined}>{formatRatioValue(row.open_ratio)}</TableCell>
-            <TableCell className="font-mono" title={row.close_observed_at ?? undefined}>{formatRatioValue(row.close_ratio)}</TableCell>
             <TableCell className="font-mono">{formatRatioPrice(row.open_price)}</TableCell>
+            <TableCell className="font-mono">{formatRatioPrice(row.high_price)}</TableCell>
+            <TableCell className="font-mono">{formatRatioPrice(row.low_price)}</TableCell>
             <TableCell className="font-mono">{formatRatioPrice(row.close_price)}</TableCell>
             <TableCell className="font-mono">{formatRatioValue(row.price_change_return, true)}</TableCell>
+            <TableCell className="text-xs text-muted-foreground" title={[row.price_provider, row.price_source_feed, row.price_market_timestamp, row.price_observed_at].filter(Boolean).join(" · ")}>{stateLabel(row.price_status ?? "NOT_CAPTURED", t)} · {stateLabel(row.price_quality ?? "UNAVAILABLE", t)}</TableCell>
+            <TableCell className="font-mono" title={row.open_observed_at ?? undefined}>{formatRatioValue(row.open_ratio)}</TableCell>
+            <TableCell className="font-mono" title={row.close_observed_at ?? undefined}>{formatRatioValue(row.close_ratio)}</TableCell>
             <TableCell className="text-xs text-muted-foreground">{hasRatioProvenanceMismatch(row) ? t.provenanceMismatch : stateLabel(row.status, t)} · {stateLabel(row.quality, t)}</TableCell>
           </TableRow>)}</TableBody>
         </Table>
       </CardContent>
     </Card>}
-    <p className="text-sm leading-6 text-muted-foreground">{t.disclosure}</p>
+    <p className="text-sm leading-6 text-muted-foreground">{layers.ratio ? t.disclosure : t.priceDisclosure}</p>
   </div>;
 }
 
@@ -112,6 +130,7 @@ export function ProfitRatioDashboard({ initialRange }: { initialRange: ProfitRat
   const [range, setRange] = useState(initialRange);
   const [rangeError, setRangeError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [layers, setLayers] = useState<ChartLayers>({ price: true, returns: false, ratio: false });
   const trimmedQuery = query.trim();
 
   useEffect(() => {
@@ -155,9 +174,17 @@ export function ProfitRatioDashboard({ initialRange }: { initialRange: ProfitRat
           {selected && <Button type="button" variant="ghost" onClick={() => setRetry((value) => value + 1)}>{t.refresh}</Button>}
           {rangeError && <p role="alert" className="w-full text-sm text-amber-200">{t.invalidRange}</p>}
         </form>
+        <fieldset className="rounded-lg border border-white/[0.08] px-4 pb-4">
+          <legend className="px-1 text-xs text-muted-foreground">{t.chartLayers}</legend>
+          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-3">
+            {([['price', t.priceDailyK], ['returns', t.dailyReturn], ['ratio', t.profitRatio]] as const).map(([layer, label]) => <label key={layer} className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" className="size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" checked={layers[layer]} onChange={(event) => setLayers((current) => ({ ...current, [layer]: event.target.checked }))} />{label}
+            </label>)}
+          </div>
+        </fieldset>
       </CardContent>
     </Card>
-    {selected ? <DailyHistory key={`${selected.instrument_id}:${range.start}:${range.end}:${retry}`} symbol={selected.symbol} range={range} onRetry={() => setRetry((value) => value + 1)} />
+    {selected ? <DailyHistory key={`${selected.instrument_id}:${range.start}:${range.end}:${retry}`} symbol={selected.symbol} range={range} layers={layers} onRetry={() => setRetry((value) => value + 1)} />
       : <p className="rounded-xl border border-dashed border-white/[0.12] p-8 text-center text-sm text-muted-foreground">{t.chooseStock}</p>}
   </div>;
 }

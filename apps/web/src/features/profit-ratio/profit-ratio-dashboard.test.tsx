@@ -21,6 +21,9 @@ const row: ProfitRatioDailyRow = {
   open_observed_at: "2026-09-08T13:50:00Z", close_observed_at: "2026-09-08T20:20:00Z",
   open_market_timestamp: "2026-09-08T13:30:00Z", close_market_timestamp: "2026-09-08T20:00:00Z",
   open_reason_code: null, close_reason_code: null, quality: "MOCK", status: "COMPLETE",
+  high_price: "155.25", low_price: "148.00", price_status: "COMPLETE", price_provider: "mock",
+  price_source_feed: "mock-daily", price_quality: "MOCK", price_adjustment: "raw", price_scope: "CONSOLIDATED_DAILY_ELIGIBLE_TRADES",
+  price_market_timestamp: "2026-09-08T04:00:00Z", price_observed_at: "2026-09-08T20:25:00Z",
 };
 const history = (overrides: Partial<ProfitRatioDailyHistory> = {}): ProfitRatioDailyHistory => ({
   symbol: "NVDA", instrument_id: "ins_nvda_xnas", methodology: { id: "CHIP_TURNOVER", version: "1", display_name: "Mock turnover estimate" },
@@ -107,13 +110,16 @@ describe("QQQ daily Profit Ratio dashboard", () => {
   });
 
   it("keeps real price data visible when model inputs are missing", async () => {
-    daily.mockResolvedValue(envelope(history({ provider: "alpaca:sip", status: "DATA_INSUFFICIENT", rows: [{ ...row, open_ratio: null, close_ratio: null, ratio_change: null, quality: "DELAYED", status: "DATA_INSUFFICIENT" }], gaps: [{ trading_date: "2026-09-08", phase: "OPEN", reason_code: "VALIDATED_PRIOR_DISTRIBUTION_MISSING" }] })));
-    renderDashboard(); await selectStock();
+    daily.mockResolvedValue(envelope(history({ provider: "alpaca:sip", status: "DATA_INSUFFICIENT", rows: [{ ...row, open_ratio: null, close_ratio: null, ratio_change: null, quality: "DELAYED", status: "DATA_INSUFFICIENT", price_provider: "alpaca", price_source_feed: "sip", price_quality: "DELAYED" }], gaps: [{ trading_date: "2026-09-08", phase: "OPEN", reason_code: "VALIDATED_PRIOR_DISTRIBUTION_MISSING" }] })));
+    const view = renderDashboard(); await selectStock();
     const table = await screen.findByRole("table");
     expect(within(table).getAllByText("—")).toHaveLength(2);
     expect(within(table).getByText("+2.00%")).toBeTruthy();
+    expect(screen.getByRole("img", { name: /Daily stock candlesticks/ })).toBeTruthy();
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Profit Ratio" }));
     expect(screen.getByText(/Price data is available, but the model/)).toBeTruthy();
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.queryByRole("img", { name: /Daily opening and closing Profit Ratio/ })).toBeNull();
     expect(screen.queryByText(/DEMO \/ MOCK/)).toBeNull();
     expect(screen.getByText(/VALIDATED_PRIOR_DISTRIBUTION_MISSING/)).toBeTruthy();
   });
@@ -122,6 +128,7 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     daily.mockResolvedValue(envelope(history({ provider: "mixed", status: "PARTIAL", rows: [{ ...row, status: "PROVENANCE_MISMATCH", quality: "MIXED" }] })));
     const view = renderDashboard(); await selectStock();
     const table = await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Profit Ratio" }));
     expect(within(table).getByText("60.00%")).toBeTruthy();
     expect(within(table).getByText("66.00%")).toBeTruthy();
     expect(within(table).getByText(/Incompatible observations/)).toBeTruthy();
@@ -133,6 +140,7 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     daily.mockResolvedValue(envelope(history({ status: "PARTIAL", rows: [{ ...row, open_ratio: "0", close_ratio: null, close_price: null, price_change_return: null, close_observed_at: null, status: "PARTIAL" }], gaps: [{ trading_date: "2026-09-08", phase: "CLOSE", reason_code: "NOT_DUE" }] })));
     const view = renderDashboard(); await selectStock();
     const table = await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Profit Ratio" }));
     expect(within(table).getByText("0.00%")).toBeTruthy();
     expect(within(table).getAllByText("—")).toHaveLength(3);
     expect(view.container.querySelectorAll("[data-ratio-body]")).toHaveLength(0);
@@ -176,9 +184,54 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     fireEvent.change(screen.getByLabelText("搜索 QQQ 成分股票"), { target: { value: "NVDA" } });
     fireEvent.click(await screen.findByRole("button", { name: /NVDA.*NVIDIA/ }));
     expect(await screen.findByRole("table")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "获利比例" }));
     expect(screen.getByRole("columnheader", { name: "开盘获利比" })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: "股票当日涨跌幅" })).toBeTruthy();
     expect(screen.getByText(/没有上下影线/)).toBeTruthy();
+  });
+
+  it("toggles independent chart layers without fetching again and keeps selection across stocks", async () => {
+    const view = renderDashboard(); await selectStock(); await screen.findByRole("table");
+    expect((screen.getByRole("checkbox", { name: "Price daily K" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Stock daily change" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: "Profit Ratio" }) as HTMLInputElement).checked).toBe(false);
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
+    expect(view.container.querySelectorAll("[data-daily-return], [data-ratio-body]")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Stock daily change" }));
+    expect(screen.getByRole("img", { name: /separate percentage axis/ })).toBeTruthy();
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Profit Ratio" }));
+    expect(view.container.querySelectorAll("[data-ratio-body]")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Price daily K" }));
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(0);
+    expect(view.container.querySelectorAll("[data-daily-return], [data-ratio-body]")).toHaveLength(2);
+    expect(daily).toHaveBeenCalledTimes(1);
+    await selectStock("AAPL"); await screen.findByRole("table");
+    expect((screen.getByRole("checkbox", { name: "Price daily K" }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("checkbox", { name: "Stock daily change" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Profit Ratio" }) as HTMLInputElement).checked).toBe(true);
+    expect(daily).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a chart placeholder while loading and a specific missing OHLC explanation afterward", async () => {
+    let finish: (value: ReturnType<typeof envelope<ProfitRatioDailyHistory>>) => void = () => {};
+    daily.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const view = renderDashboard(); await selectStock();
+    expect(screen.getByRole("status", { name: /Loading stored/ })).toBeTruthy();
+    expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(0);
+    await act(async () => finish(envelope(history({ rows: [{ ...row, high_price: null, low_price: null, price_status: "PARTIAL" }] }))));
+    expect(screen.getByText(/Complete daily price OHLC is not available/)).toBeTruthy();
+    expect(within(screen.getByRole("table")).getByText("$150.01")).toBeTruthy();
+    expect(view.container.querySelectorAll("[data-price-candle], [data-price-wick]")).toHaveLength(0);
+  });
+
+  it("can hide every chart without losing the data table or doing another read", async () => {
+    renderDashboard(); await selectStock(); await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Price daily K" }));
+    expect(screen.getByText(/Choose a chart above/)).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(daily).toHaveBeenCalledTimes(1);
   });
 });
 

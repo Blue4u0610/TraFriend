@@ -339,6 +339,22 @@ The new reviewed `openapi-profit-ratio.json` snapshot and generated frontend typ
 are produced by `export_profit_ratio_contract`; a deterministic drift test compares
 them with the actual FastAPI schemas. Legacy prototype types remain separate.
 
+The price-first correction adds independent `DailyPriceRepository` and
+`DailyPriceProvider` ports, `DailyPriceCaptureService`, and immutable PostgreSQL
+`market_daily_price_bars`. `ProfitRatioService` joins persisted daily candles by
+instrument/trading date for display; ratio availability never gates price reads.
+OHLC and returns retain their own provenance and availability fields. Normal API
+composition wires repositories only. `capture_qqq_price_history` is the bounded
+historical/operational entry point; the existing `capture_profit_ratio` worker also
+invokes independent completed-day price capture, so its external schedule maintains
+both series without a FastAPI loop.
+
+`bootstrap_production` seeds QQQ identity metadata only when empty, from the
+source-attributed 2026-09-04 bundled snapshot, and verifies nonzero searchable
+coverage. It never writes price fixtures or overwrites a newer snapshot. Metadata
+bootstrap is deterministic/offline; issuer refresh and market-price acquisition
+remain explicit separate operations. See ADR 0007.
+
 Profit Ratio uses its own domain, application service, provider port, repository, and API routes. This allows its methodology and data source to evolve without changing the calculator.
 
 The ingestion path stores raw normalized observations with methodology versions. Read models may later aggregate observations into OHLC bars only when sampling frequency supports genuine open, high, low, and close values. Price history and Profit Ratio history remain separate series joined for presentation by an explicit interval/timezone rule.

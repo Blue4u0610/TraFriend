@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, localcontext
 from typing import Callable, Optional, Sequence, Tuple
 from uuid import uuid4
 
+from trafriend_api.application.ports.daily_price import DailyPriceRepository
 from trafriend_api.application.ports.profit_ratio import (
     ProfitRatioCaptureProvider,
     ProfitRatioPersistenceOutcome,
@@ -50,6 +51,16 @@ class ProfitRatioDailyRow:
     close_reason_code: Optional[str]
     open_market_timestamp: Optional[datetime]
     close_market_timestamp: Optional[datetime]
+    high_price: Optional[Decimal] = None
+    low_price: Optional[Decimal] = None
+    price_status: str = "NOT_CAPTURED"
+    price_provider: Optional[str] = None
+    price_source_feed: Optional[str] = None
+    price_observed_at: Optional[datetime] = None
+    price_market_timestamp: Optional[datetime] = None
+    price_quality: Optional[str] = None
+    price_adjustment: Optional[str] = None
+    price_scope: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +114,7 @@ class ProfitRatioService:
         provider: Optional[ProfitRatioCaptureProvider] = None,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         publication_delay: timedelta = timedelta(minutes=20),
+        price_repository: Optional[DailyPriceRepository] = None,
     ) -> None:
         if publication_delay < timedelta(0):
             raise ValueError("publication delay cannot be negative")
@@ -111,6 +123,7 @@ class ProfitRatioService:
         self._provider = provider
         self._now = now
         self._publication_delay = publication_delay
+        self._price_repository = price_repository
 
     def search(self, query: str, limit: int = 25) -> Sequence[NasdaqConstituent]:
         query = query.strip().upper()
@@ -138,6 +151,16 @@ class ProfitRatioService:
         constituent = self._constituent(symbol)
         now = self._utc_now()
         records = self._repository.history(constituent.instrument_id, start, end)
+        price_bars = (
+            self._price_repository.history(constituent.instrument_id, start, end)
+            if self._price_repository is not None
+            else ()
+        )
+        by_price_date = {
+            bar.trading_date: bar
+            for bar in price_bars
+            if bar.session_closed_at <= now and bar.observed_at <= now
+        }
         by_phase = {
             (item.observation.trading_date, item.observation.phase): item
             for item in records
@@ -152,6 +175,24 @@ class ProfitRatioService:
             opening = by_phase.get((session.trading_date, ProfitRatioPhase.OPEN))
             closing = by_phase.get((session.trading_date, ProfitRatioPhase.CLOSE))
             row = self._row(session, opening, closing, now, self._publication_delay)
+            bar = by_price_date.get(session.trading_date)
+            if bar is not None:
+                row = replace(
+                    row,
+                    open_price=bar.open,
+                    high_price=bar.high,
+                    low_price=bar.low,
+                    close_price=bar.close,
+                    price_change_return=bar.price_change_return,
+                    price_status="COMPLETE",
+                    price_provider=bar.provider,
+                    price_source_feed=bar.source_feed,
+                    price_observed_at=bar.observed_at,
+                    price_market_timestamp=bar.market_timestamp,
+                    price_quality=bar.quality,
+                    price_adjustment=bar.adjustment,
+                    price_scope=bar.price_scope,
+                )
             rows.append(row)
             if row.status == "PROVENANCE_MISMATCH":
                 gaps.append(
@@ -172,7 +213,9 @@ class ProfitRatioService:
                         else "NOT_CAPTURED"
                     )
                     gaps.append(ProfitRatioGap(session.trading_date, phase, reason))
-        providers = {item.observation.provider for item in records}
+        providers = {item.observation.provider for item in records} | {
+            bar.provider for bar in by_price_date.values()
+        }
         has_prices = any(row.open_price is not None or row.close_price is not None for row in rows)
         has_ratios = any(row.open_ratio is not None or row.close_ratio is not None for row in rows)
         status = (
@@ -395,6 +438,7 @@ class ProfitRatioService:
                 else None
             )
         qualities = {item.observation.quality for item in (opening, closing) if item is not None}
+        latest_price_context = closing or opening
         return ProfitRatioDailyRow(
             trading_date=session.trading_date,
             open_ratio=open_ratio,
@@ -431,4 +475,24 @@ class ProfitRatioService:
             else "NOT_CAPTURED",
             open_market_timestamp=opening.observation.market_timestamp if opening else None,
             close_market_timestamp=closing.observation.market_timestamp if closing else None,
+            price_status="PARTIAL"
+            if latest_price_context
+            else "NOT_DUE"
+            if session.closed_at + publication_delay > now
+            else "NOT_CAPTURED",
+            price_provider=latest_price_context.price.provider if latest_price_context else None,
+            price_source_feed=latest_price_context.price.source_feed
+            if latest_price_context
+            else None,
+            price_observed_at=latest_price_context.price.observed_at
+            if latest_price_context
+            else None,
+            price_market_timestamp=latest_price_context.price.market_timestamp
+            if latest_price_context
+            else None,
+            price_quality=latest_price_context.observation.quality
+            if latest_price_context
+            else None,
+            price_adjustment="raw" if latest_price_context else None,
+            price_scope="ENDPOINT_CONTEXT_ONLY" if latest_price_context else None,
         )

@@ -1,10 +1,12 @@
-# QQQ equity open/close capture
+# QQQ stock price charts and optional Profit Ratio
 
 ## What is and is not available
 
-The QQQ-only search and open/close chart read PostgreSQL through dedicated public
-read endpoints. Two endpoint values can form an open/close body but cannot supply
-intraday high/low. A missing ratio does not hide valid prices or daily returns.
+The QQQ-only search and charts read PostgreSQL through dedicated public read
+endpoints. Selecting a stock displays complete price OHLC candles by default.
+Price daily K, daily return, and Profit Ratio panels are independently selectable.
+Two ratio endpoint values can form a body but cannot supply intraday ratio high/low.
+A missing ratio does not hide stock search, valid price candles, or daily returns.
 An explicit Mock fixture is used only when no PostgreSQL configuration is supplied.
 
 The current Alpaca adapter can capture real consolidated regular open/close prices.
@@ -21,10 +23,17 @@ credential-bearing URLs into commands, docs or the frontend.
 
 ```sh
 .venv/bin/alembic upgrade head
-.venv/bin/python -m trafriend_api.scripts.capture_profit_ratio --refresh-universe
+.venv/bin/python -m trafriend_api.scripts.bootstrap_production
+.venv/bin/python -m trafriend_api.scripts.capture_qqq_price_history \
+  --start 2026-06-08 --end 2026-09-04
 ```
 
-The refresh imports the current Invesco QQQ equity-holdings snapshot. It preserves
+Bootstrap now verifies the independent price table and initializes empty QQQ search
+metadata from the verified normalized 102-equity issuer snapshot dated 2026-09-04.
+It makes no vendor request and inserts no fake market prices. Existing metadata is
+preserved; a later deployment cannot replace a newer snapshot with the bundled date.
+An operator may explicitly use `--refresh-universe` on either capture command to
+refresh sourced membership. This refresh imports the current Invesco snapshot and preserves
 canonical identities already known by TraFriend and rejects malformed/incomplete
 issuer responses. Repeat snapshots are idempotent; different same-date facts
 conflict. No migrations fetch a vendor or seed licensed production market prices.
@@ -34,14 +43,32 @@ conflict. No migrations fetch a vendor or seed licensed production market prices
 For the development-round range (current constituents, not historical membership):
 
 ```sh
-.venv/bin/python -m trafriend_api.scripts.capture_profit_ratio \
+.venv/bin/python -m trafriend_api.scripts.capture_qqq_price_history \
   --start 2026-06-08 --end 2026-09-04
 ```
 
-The command batches daily bars and pagination, stores distinct OPEN/CLOSE records,
-and reports unavailable data per symbol. It does not label reconstructed historical
-inputs as observations actually acquired at the historical opening instant.
-It will store null Profit Ratios rather than guess historical state.
+This independent command batches raw/split SIP daily bars with pagination and stores
+genuine OHLC in `market_daily_price_bars`, without requiring or creating numerical
+Profit Ratios. Prices are raw eligible consolidated regular-session prices; returns
+use the prior session close on the current split basis, not dividend-reinvested returns.
+Only completed sessions plus 20 minutes are captured. Existing bars are reused,
+missing dates remain missing, and immutable conflicts never overwrite valid history.
+Use the older `capture_profit_ratio` command for OPEN/CLOSE ratio-input observations;
+it also delegates completed-day independent OHLC capture. Price acquisition does not
+solve unavailable cost-distribution/float inputs or generate synthetic ratio values.
+
+Local real replay on 2026-09-08: 102 securities, 63 sessions, 6,417 bars inserted;
+9 unavailable dates (HONA June 8-12; SPCX June 8-11), zero conflicts. Rerun:
+0 inserted, 6,417 existing, same 9 gaps, zero duplicate rows. This is local
+`trafriend_dev` evidence, not a claim that Render data has been populated. Existing
+28 calculator anchors and 12,834 prior endpoint-price records were preserved.
+
+For deployment, execute this command in the backend's inherited production
+environment after migration and metadata bootstrap. Git push and migration alone
+do not transfer local market-price rows. Do not expose an unauthenticated capture
+endpoint or add credentials to a build command. A partial capture exits 2 while
+retaining valid bars; inspect the report and preserve explicit missing dates rather
+than treating a partial result as a failed application migration.
 
 ## Daily scheduled invocation
 
@@ -56,6 +83,9 @@ seven-calendar-day catch-up window starting no earlier than 2026-09-08. It check
 each calendar session's OPEN and CLOSE phase, waits logically until +20 minutes,
 and returns immediately for phases not due. Existing successful/insufficient
 records avoid provider calls. Older outages require an explicit bounded replay.
+The same worker now separately captures completed-day OHLC, irrespective of missing
+ratio model inputs. Historical ratio prefetch failure is isolated and cannot prevent
+an independent price attempt. No second in-process scheduler is introduced.
 
 An external scheduled worker can invoke this at the 20th and 50th minute of each
 hour. The session calendar, not the scheduler's UTC schedule, determines whether

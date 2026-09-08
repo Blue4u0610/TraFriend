@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any, Callable, Mapping, Optional, Sequence
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from trafriend_api.application.ports.daily_price import DailyPriceProvider
 from trafriend_api.application.ports.profit_ratio import ProfitRatioCaptureProvider
+from trafriend_api.domain.daily_price import DailyPriceBar
 from trafriend_api.domain.errors import (
     ProviderAuthenticationError,
     ProviderRateLimitError,
@@ -24,7 +27,7 @@ EASTERN = ZoneInfo("America/New_York")
 UTC = timezone.utc
 
 
-class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
+class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider, DailyPriceProvider):
     """SIP regular-price input capture, not an Alpaca Profit Ratio endpoint.
 
     Alpaca does not supply our validated cost seed/dated float. Those capabilities
@@ -48,6 +51,7 @@ class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
         self._owns_client = client is None
         self._now = now
         self._bars: dict[tuple[str, str, date], tuple[Decimal, Decimal]] = {}
+        self._ohlc: dict[tuple[str, date], tuple[datetime, Decimal, Decimal]] = {}
         self._primed: Optional[tuple[date, date, frozenset[str]]] = None
 
     def close(self) -> None:
@@ -58,7 +62,11 @@ class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
         """Batch a bounded completed-history range once for both endpoint phases."""
         if end < start or (end - start).days > 400:
             raise ValueError("historical price input range must be at most 400 days")
-        end_at = datetime.combine(end + timedelta(days=1), time.min, EASTERN)
+        # Alpaca's end is inclusive: never request next midnight and then reject
+        # a legitimate following-day daily bar at that exact boundary.
+        end_at = datetime.combine(end + timedelta(days=1), time.min, EASTERN) - timedelta(
+            microseconds=1
+        )
         if end_at > self._now() - timedelta(minutes=20):
             raise ValueError("prime_history accepts completed historical dates only")
         self._load(symbols, start, end_at)
@@ -120,15 +128,81 @@ class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
             )
         return tuple(results)
 
-    def _load(self, symbols: Sequence[str], start: date, end_at: datetime) -> None:
+    def get_daily_price_bars(
+        self, symbols: Sequence[str], sessions: Sequence[ProfitRatioSession]
+    ) -> tuple[DailyPriceBar, ...]:
+        if not sessions:
+            return ()
+        ordered = tuple(sorted(sessions, key=lambda session: session.trading_date))
+        if len({session.trading_date for session in ordered}) != len(ordered):
+            raise ValueError("daily price sessions must be unique")
+        if (ordered[-1].trading_date - ordered[0].trading_date).days > 100:
+            raise ValueError("daily candle capture is bounded to 100 days")
+        now = self._now()
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("capture clock must be timezone-aware")
+        if any(session.closed_at + timedelta(minutes=20) > now for session in ordered):
+            raise ValueError("daily candles require a completed session plus publication delay")
+        self._load(
+            symbols,
+            ordered[0].previous_trading_date,
+            ordered[-1].closed_at + timedelta(minutes=1),
+            for_daily_candles=True,
+        )
+        observed_at = self._now().astimezone(UTC)
+        results = []
+        for symbol in symbols:
+            for session in ordered:
+                raw = self._bars.get(("raw", symbol, session.trading_date))
+                candle = self._ohlc.get((symbol, session.trading_date))
+                if raw is None or candle is None:
+                    continue
+                adjusted = self._bars.get(("split", symbol, session.trading_date))
+                previous = self._bars.get(("split", symbol, session.previous_trading_date))
+                with localcontext() as context:
+                    context.prec = 40
+                    previous_close = (
+                        previous[1] * raw[0] / adjusted[0] if adjusted and previous else None
+                    )
+                results.append(
+                    DailyPriceBar(
+                        id=str(uuid4()),
+                        instrument_id=self._ids[symbol],
+                        symbol=symbol,
+                        trading_date=session.trading_date,
+                        open=raw[0],
+                        high=candle[1],
+                        low=candle[2],
+                        close=raw[1],
+                        previous_close=previous_close,
+                        session_opened_at=session.opened_at.astimezone(UTC),
+                        session_closed_at=session.closed_at.astimezone(UTC),
+                        market_timestamp=candle[0].astimezone(UTC),
+                        observed_at=observed_at,
+                        provider="alpaca",
+                        source_feed="sip",
+                        quality="DELAYED",
+                    )
+                )
+        return tuple(results)
+
+    def _load(
+        self,
+        symbols: Sequence[str],
+        start: date,
+        end_at: datetime,
+        for_daily_candles: bool = False,
+    ) -> None:
         if not symbols or len(symbols) > 200 or any(symbol not in self._ids for symbol in symbols):
             raise ValueError("capture requires 1-200 known QQQ equity symbols")
         request_start = datetime.combine(start, time.min, EASTERN)
         combined: dict[tuple[str, str, date], tuple[Decimal, Decimal]] = {}
+        candles: dict[tuple[str, date], tuple[datetime, Decimal, Decimal]] = {}
         for adjustment in ("raw", "split"):
             token: Optional[str] = None
             tokens: set[str] = set()
             parsed: dict[tuple[str, str, date], tuple[Decimal, Decimal]] = {}
+            rejected: set[tuple[str, str, date]] = set()
             while True:
                 params = {
                     "symbols": ",".join(symbols),
@@ -149,8 +223,11 @@ class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
                 for symbol in symbols:
                     values = bars.get(symbol, [])
                     if not isinstance(values, list):
+                        if for_daily_candles:
+                            continue
                         raise ProviderUnavailableError("malformed daily price list")
                     for value in values:
+                        key = None
                         try:
                             stamp = datetime.fromisoformat(str(value["t"]).replace("Z", "+00:00"))
                             if stamp.tzinfo is None or stamp.utcoffset() is None:
@@ -160,15 +237,46 @@ class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
                             if stamp.astimezone(EASTERN).timetz().replace(tzinfo=None) != time.min:
                                 raise ValueError("daily bars must start at New York midnight")
                             trading_date = stamp.astimezone(EASTERN).date()
+                            key = (adjustment, symbol, trading_date)
                             prices = (Decimal(str(value["o"])), Decimal(str(value["c"])))
-                            if any(not price.is_finite() or price <= 0 for price in prices):
+                            if any(
+                                not price.is_finite() or not 0 < price < Decimal("1e16")
+                                for price in prices
+                            ):
                                 raise ValueError("invalid price")
+                            if adjustment == "raw" and for_daily_candles:
+                                high = Decimal(str(value["h"]))
+                                low = Decimal(str(value["l"]))
+                                if any(
+                                    not price.is_finite() or not 0 < price < Decimal("1e16")
+                                    for price in (high, low)
+                                ):
+                                    raise ValueError("invalid daily high/low")
+                                if high < max(prices) or low > min(prices) or low > high:
+                                    raise ValueError("invalid daily OHLC ordering")
+                                candles[(symbol, trading_date)] = (stamp, high, low)
                         except (KeyError, TypeError, ValueError, InvalidOperation):
+                            if for_daily_candles:
+                                if key is not None:
+                                    rejected.add(key)
+                                    parsed.pop(key, None)
+                                    if adjustment == "raw":
+                                        candles.pop((key[1], key[2]), None)
+                                continue
                             raise ProviderUnavailableError("malformed daily price bar") from None
                         if not start <= trading_date <= end_at.astimezone(EASTERN).date():
                             raise ProviderUnavailableError("unexpected daily price date")
-                        key = (adjustment, symbol, trading_date)
+                        if key in rejected:
+                            if adjustment == "raw":
+                                candles.pop((symbol, trading_date), None)
+                            continue
                         if key in parsed:
+                            if for_daily_candles:
+                                rejected.add(key)
+                                parsed.pop(key)
+                                if adjustment == "raw":
+                                    candles.pop((symbol, trading_date), None)
+                                continue
                             raise ProviderUnavailableError("duplicate daily price bar")
                         parsed[key] = prices
                 next_token = payload.get("next_page_token")
@@ -186,6 +294,13 @@ class AlpacaProfitRatioCaptureProvider(ProfitRatioCaptureProvider):
             if not (key[1] in symbols and start <= key[2] <= end_at.astimezone(EASTERN).date())
         }
         self._bars.update(combined)
+        if for_daily_candles:
+            self._ohlc = {
+                key: value
+                for key, value in self._ohlc.items()
+                if not (key[0] in symbols and start <= key[1] <= end_at.astimezone(EASTERN).date())
+            }
+            self._ohlc.update(candles)
 
     def _request(self, params: Mapping[str, str]) -> dict[str, Any]:
         try:

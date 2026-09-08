@@ -639,6 +639,19 @@ date, nullable decimal-string `open_ratio`, `close_ratio`, `open_price`, `close_
 `price_change_return`, `ratio_change`; phase-specific market/observation UTC times;
 quality, status and per-phase reason codes. No high/low values are implied.
 
+Additive price-first fields are `high_price`, `low_price`, `price_status`,
+`price_provider`, `price_source_feed`, `price_market_timestamp`, `price_observed_at`,
+`price_quality`, `price_adjustment`, and `price_scope`. A complete independent daily
+bar supplies genuine `open_price`/`high_price`/`low_price`/`close_price` and
+`price_change_return`, even when both ratios are null or no ratio observation exists.
+`price_status` is `COMPLETE` for a persisted full daily bar, `PARTIAL` for endpoint-only
+price context, or `NOT_CAPTURED`/`NOT_DUE`. Only `COMPLETE` permits price candle wicks.
+Price timestamps/provenance describe the independent bar, not the ratio observations.
+Prices are raw USD eligible-trade daily bars; return compares the close to the exact
+prior session's close transformed onto this day's split basis, not total return.
+Top-level `DATA_INSUFFICIENT` can describe ratio coverage while price data is complete;
+clients must use per-series availability rather than suppressing the whole view.
+
 Ratios/returns are fractions; ratio changes display as percentage-point changes.
 Missing previous price makes return null. Missing ratio inputs preserve real prices
 but return `DATA_INSUFFICIENT`. Before a phase is due, its gap is `NOT_DUE`. No zero

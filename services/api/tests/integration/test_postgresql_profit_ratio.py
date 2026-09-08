@@ -20,6 +20,7 @@ from trafriend_api.application.ports.profit_ratio import (
     ProfitRatioPersistenceOutcome,
 )
 from trafriend_api.application.services.profit_ratio import ProfitRatioService
+from trafriend_api.domain.daily_price import DailyPriceBar, DailyPriceConflictError
 from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioCaptureInput,
@@ -32,6 +33,8 @@ from trafriend_api.domain.profit_ratio_daily import (
     ProfitRatioStatus,
 )
 from trafriend_api.infrastructure.calendar.profit_ratio import ProfitRatioExchangeCalendar
+from trafriend_api.infrastructure.persistence.daily_price import PostgreSQLDailyPriceRepository
+from trafriend_api.infrastructure.persistence.daily_price_models import DailyPriceBarRecord
 from trafriend_api.infrastructure.persistence.postgresql_profit_ratio import (
     PostgreSQLProfitRatioRepository,
 )
@@ -42,6 +45,20 @@ from trafriend_api.settings import Settings
 UTC = timezone.utc
 TRADING_DATE = date(2026, 9, 4)
 NOW = datetime(2026, 9, 9, 12, tzinfo=UTC)
+
+
+def _daily_price_bar(symbol: str) -> DailyPriceBar:
+    return DailyPriceBar(
+        id=f"candidate-{symbol}", instrument_id=f"ins_daily_{symbol.lower()}", symbol=symbol,
+        trading_date=TRADING_DATE, open=Decimal("100"),
+        high=Decimal("120.123456789012345678901234567890"),
+        low=Decimal("90"), close=Decimal("110.123456789012345678901234567890"),
+        previous_close=Decimal("100"),
+        session_opened_at=datetime(2026, 9, 4, 13, 30, tzinfo=UTC),
+        session_closed_at=datetime(2026, 9, 4, 20, tzinfo=UTC),
+        market_timestamp=datetime(2026, 9, 4, 4, tzinfo=UTC), observed_at=NOW,
+        provider="mock", source_feed="mock-daily-price-test", quality="MOCK",
+    )
 
 
 @dataclass(frozen=True)
@@ -349,3 +366,94 @@ def test_postgresql_data_insufficient_is_null_and_missing_days_are_not_filled(
     assert {gap.reason_code for gap in history.gaps} == {
         "VALIDATED_PRIOR_DISTRIBUTION_MISSING", "NOT_CAPTURED"
     }
+
+
+def test_postgresql_independent_ohlc_survives_recreation_and_preserves_decimal_precision(
+    postgresql_context: ProfitRatioPostgreSQLContext,
+) -> None:
+    assert "market_daily_price_bars" in inspect(postgresql_context.engine).get_table_names()
+    repository = PostgreSQLDailyPriceRepository(postgresql_context.engine)
+    candidate = _daily_price_bar("DAILYAA")
+    first = repository.save(candidate)
+    retry = repository.save(replace(candidate, id="retry", observed_at=NOW + timedelta(minutes=1)))
+    assert first.outcome == "INSERTED" and retry.outcome == "EXISTING"
+    assert first.bar == retry.bar and first.bar.id != candidate.id
+    assert first.bar.high == candidate.high and first.bar.close == candidate.close
+    with postgresql_context.engine.connect() as connection:
+        assert connection.scalar(text(
+            "SELECT count(*) FROM market_daily_price_bars WHERE instrument_id = :id"
+        ), {"id": candidate.instrument_id}) == 1
+        assert connection.scalar(text(
+            "SELECT count(*) FROM profit_ratio_observations WHERE instrument_id = :id"
+        ), {"id": candidate.instrument_id}) == 0
+    recreated_engine = postgresql_context.new_engine()
+    try:
+        with recreated_engine.begin() as connection:
+            connection.execute(text("SET TIME ZONE 'America/New_York'"))
+        recreated = PostgreSQLDailyPriceRepository(recreated_engine)
+        stored = recreated.get(candidate.instrument_id, TRADING_DATE)
+        assert stored == first.bar and stored is not None
+        assert stored.market_timestamp.tzinfo == UTC
+        assert stored.observed_at.tzinfo == UTC
+        assert recreated.history(candidate.instrument_id, TRADING_DATE, TRADING_DATE) == (stored,)
+    finally:
+        recreated_engine.dispose()
+
+
+def test_postgresql_daily_price_conflicts_and_direct_mutations_do_not_overwrite(
+    postgresql_context: ProfitRatioPostgreSQLContext,
+) -> None:
+    repository = PostgreSQLDailyPriceRepository(postgresql_context.engine)
+    candidate = _daily_price_bar("DAILYBB")
+    stored = repository.save(candidate).bar
+    with pytest.raises(DailyPriceConflictError):
+        repository.save(replace(candidate, high=Decimal("121")))
+    for statement in (
+        "UPDATE market_daily_price_bars SET high = 122 WHERE id = :id",
+        "DELETE FROM market_daily_price_bars WHERE id = :id",
+    ):
+        with pytest.raises(DBAPIError), postgresql_context.engine.begin() as connection:
+            connection.execute(text(statement), {"id": stored.id})
+    assert repository.get(candidate.instrument_id, TRADING_DATE) == stored
+
+
+def test_postgresql_independent_daily_price_read_api_without_ratio_records(
+    postgresql_context: ProfitRatioPostgreSQLContext,
+) -> None:
+    from trafriend_api.infrastructure.persistence.in_memory_profit_ratio import (
+        InMemoryProfitRatioRepository,
+    )
+    candidate = _daily_price_bar("DAILYCC")
+    member = NasdaqConstituent(candidate.instrument_id, candidate.symbol, "Daily price fixture",
+                              TRADING_DATE, "mock-daily-price-test")
+    price_repository = PostgreSQLDailyPriceRepository(postgresql_context.engine)
+    price_repository.save(candidate)
+    app = create_app(Settings())
+    app.state.profit_ratio_service = ProfitRatioService(
+        InMemoryProfitRatioRepository((member,)), ProfitRatioExchangeCalendar(),
+        now=lambda: NOW, price_repository=price_repository,
+    )
+    with TestClient(app) as client:
+        search = client.get("/api/v1/profit-ratio/universe/search?q=DAILYCC")
+        assert search.status_code == 200 and search.json()["data"][0]["symbol"] == "DAILYCC"
+        response = client.get("/api/v1/profit-ratio/symbols/DAILYCC/daily", params={
+            "start": str(TRADING_DATE), "end": str(TRADING_DATE),
+        })
+    row = response.json()["data"]["rows"][0]
+    assert response.status_code == 200 and row["price_status"] == "COMPLETE"
+    assert Decimal(row["high_price"]) == candidate.high
+    assert row["open_ratio"] is None and row["close_ratio"] is None
+    assert row["price_market_timestamp"] == "2026-09-04T04:00:00Z"
+    assert row["price_provider"] == "mock"
+
+
+@pytest.mark.parametrize("invalid_high", ["NaN", "Infinity", "80"])
+def test_postgresql_daily_ohlc_constraints_reject_nonfinite_or_wrong_order(
+    postgresql_context: ProfitRatioPostgreSQLContext, invalid_high: str,
+) -> None:
+    fields = asdict(_daily_price_bar("INVALIDDAILY"))
+    fields["id"] = str(uuid4())
+    fields["high"] = Decimal(invalid_high)
+    with pytest.raises(DBAPIError), Session(postgresql_context.engine) as session, session.begin():
+        session.add(DailyPriceBarRecord(**fields))
+        session.flush()
