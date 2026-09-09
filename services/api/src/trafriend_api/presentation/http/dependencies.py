@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Optional, cast
 
 from fastapi import Request
+from sqlalchemy import Engine
 
 from trafriend_api.application.ports.daily_close import (
     DailyCloseAnchorRepository,
@@ -54,7 +55,10 @@ class ApplicationServices:
     profit_ratio: ProfitRatioService
 
 
-def build_application_services(settings: Settings) -> ApplicationServices:
+def build_application_services(
+    settings: Settings,
+    database_engine: Optional[Engine] = None,
+) -> ApplicationServices:
     mock_provider = MockMarketDataProvider()
     mock_relationships = {
         relationship.id: relationship
@@ -70,7 +74,9 @@ def build_application_services(settings: Settings) -> ApplicationServices:
         )
         rankings: MarketRankingRepository = InMemoryMarketRankingRepository()
     else:
-        engine = create_database_engine(settings.database_url.get_secret_value())
+        engine = database_engine or create_database_engine(
+            settings.database_url.get_secret_value()
+        )
         profit_repository = PostgreSQLProfitRatioRepository(engine)
         price_repository = PostgreSQLDailyPriceRepository(engine)
         repository = PostgreSQLDailyCloseAnchorRepository(engine)

@@ -8,6 +8,9 @@ from typing import Optional, Sequence
 from sqlalchemy.exc import SQLAlchemyError
 
 from trafriend_api.infrastructure.calendar import NyseTradingCalendar
+from trafriend_api.infrastructure.persistence.database_target import (
+    require_writable_database_target,
+)
 from trafriend_api.presentation.http.dependencies import build_application_services
 from trafriend_api.settings import Settings
 
@@ -39,6 +42,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         settings = Settings.from_environment()
         if settings.database_url is None:
             raise ValueError("DATABASE_URL is required")
+        target = require_writable_database_target(
+            settings.database_url.get_secret_value(), settings.environment
+        )
         if args.provider:
             settings = settings.model_copy(
                 update={"daily_close_provider": args.provider}
@@ -54,6 +60,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
                 period = session.trading_date.strftime("%Y-%m")
             report = services.universe.capture_popular(period)
+        print(f"Data Target: {target.environment.value}")
+        print(f"Database Host: {target.host}")
+        print(f"Database Name: {target.database}")
         print(f"Capture Status: {report.status}")
         print(f"Latest Completed Trading Date: {report.trading_date}")
         print(

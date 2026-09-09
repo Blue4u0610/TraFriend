@@ -25,8 +25,13 @@ def test_existing_scheduled_runner_captures_prices_despite_missing_ratio_inputs(
     session = ProfitRatioExchangeCalendar().session(day)
     now = datetime(2026, 9, 8, 12, tzinfo=timezone.utc)
     monkeypatch.setattr(capture_profit_ratio, "datetime", SimpleNamespace(now=lambda _tz: now))
-    settings = Settings(database_url="postgresql+psycopg://test.invalid/db",
-                        alpaca_key_id="test-key", alpaca_secret_key="test-secret")
+    settings = Settings(
+        environment="production",
+        cors_origins=["https://trafriend.example"],
+        database_url="postgresql+psycopg://test.invalid/db",
+        alpaca_key_id="test-key",
+        alpaca_secret_key="test-secret",
+    )
     monkeypatch.setattr(capture_profit_ratio.Settings, "from_environment", lambda: settings)
     engine = MagicMock()
     monkeypatch.setattr(capture_profit_ratio, "create_database_engine", lambda _: engine)

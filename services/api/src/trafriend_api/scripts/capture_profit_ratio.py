@@ -24,6 +24,9 @@ from trafriend_api.infrastructure.market_data.alpaca.profit_ratio import (
 )
 from trafriend_api.infrastructure.persistence.daily_price import PostgreSQLDailyPriceRepository
 from trafriend_api.infrastructure.persistence.database import create_database_engine
+from trafriend_api.infrastructure.persistence.database_target import (
+    require_writable_database_target,
+)
 from trafriend_api.infrastructure.persistence.models import UnderlyingRecord
 from trafriend_api.infrastructure.persistence.postgresql_profit_ratio import (
     PostgreSQLProfitRatioRepository,
@@ -74,7 +77,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise ValueError("DATABASE_URL is required")
         if settings.alpaca_key_id is None or settings.alpaca_secret_key is None:
             raise ValueError("Alpaca credentials are required")
-        engine = create_database_engine(settings.database_url.get_secret_value())
+        database_url = settings.database_url.get_secret_value()
+        target = require_writable_database_target(database_url, settings.environment)
+        engine = create_database_engine(database_url)
         repository = PostgreSQLProfitRatioRepository(engine)
         if arguments.refresh_universe:
             with engine.connect() as connection:
@@ -137,6 +142,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "universe_source": constituents[0].source,
                     "universe_as_of": str(constituents[0].as_of),
                     "symbols": len(constituents),
+                    "data_target": target.environment.value,
+                    "database_host": target.host,
+                    "database_name": target.database,
                     "scope": "CURRENT_QQQ_EQUITY_HOLDINGS",
                     "start": str(start),
                     "end": str(end),

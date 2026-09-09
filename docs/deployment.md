@@ -13,6 +13,26 @@ Confirm the required display and redistribution license in writing before public
 serving Alpaca-derived closes or rankings. This licensing task does not require
 changing the deployment architecture.
 
+## Code updates versus data updates
+
+These are deliberately separate workflows:
+
+```text
+CODE UPDATE WORKFLOW
+PyCharm / Codex -> commit -> push -> Vercel and Render deploy
+
+DATA UPDATE WORKFLOW
+Render Cron or an intentional manual production command
+  -> Alpaca -> Render PostgreSQL -> existing FastAPI read -> website refresh
+```
+
+Daily ranking, Daily Close Anchor, and OHLC rows do not require a Git commit, push,
+Vercel rebuild, Render Web Service redeploy, or FastAPI restart. PostgreSQL is read
+per request; a committed row is visible on the next normal API read. Local
+`trafriend_dev` is development-only and is never copied to production. A schema
+change is different: it requires reviewed code, a migration, deployment, and
+`alembic upgrade head`.
+
 ## 1. Push the reviewed repository
 
 Push only reviewed source commits to the Git provider connected to Vercel and Render.
@@ -161,18 +181,88 @@ secret environment:
 - Root Directory: `services/api`
 - Build Command: `pip install .`
 - Run Command: `python -m trafriend_api.scripts.run_daily_market_update`
-- Example schedule: `30 23 * * 1-5` (Render cron schedules use UTC)
+- Schedule: `30 22,23 * * 1-5` (Render cron schedules use UTC)
+- Environment: the same production `DATABASE_URL`, Alpaca credentials,
+  `TRAFRIEND_ENV=production`, and safe `TRAFRIEND_CORS_ORIGINS` used by the backend;
+  no frontend variables
 
-The late UTC wake-up is intentionally conservative across U.S. daylight-saving
-changes. The command—not the cron expression—asks the NYSE calendar for the latest
-completed session, including holidays and early closes. A weekend, holiday, or
-second run with current ranking and anchors reports `SKIPPED` and exits zero. Missing
-or delayed provider data reports `PARTIAL_RETRYABLE` and exits 2 without substituting
-an older session; retry the same idempotent command after the provider publishes.
-Zero-product ranked symbols are successful structural skips and never cause that
-retry status. FastAPI contains no scheduler or infinite loop.
+The two late UTC wake-ups provide one automatic retry while remaining safely after
+the regular close in both daylight and standard time. The command—not the cron
+expression—asks the NYSE calendar for the latest completed session, including
+holidays and early closes. The first successful run updates MTD rankings, Daily Close
+Anchors, and QQQ-stock daily OHLC; the second sees immutable current rows and avoids
+duplicate provider reads. A weekend, holiday, or current rerun reports `SKIPPED` and
+exits zero. Missing or delayed provider data reports `PARTIAL_RETRYABLE` and exits 2
+without substituting an older session. Zero-product ranked symbols are successful
+structural skips and never cause retry status. FastAPI contains no scheduler or
+infinite loop.
 
-## 11. Validate the deployment
+The command prints only `PRODUCTION`/`DEVELOPMENT`, database hostname, database name,
+trading date, ranking status, and concise anchor/OHLC counters. It never prints the
+database URL, database role/password, or Alpaca secrets. A remote database is
+rejected unless `TRAFRIEND_ENV=production`; a local database is rejected in
+production mode.
+
+## 11. Operator commands
+
+Run commands from `services/api`. Values for secrets must already be present in the
+process environment or the hosting platform secret store; never paste them into a
+checked-in script.
+
+### A. Local development data update
+
+```bash
+TRAFRIEND_ENV=development \
+.venv/bin/python -m trafriend_api.scripts.run_daily_market_update
+```
+
+This accepts only the inherited local `trafriend_dev` URL.
+
+### B. Manual production data update from a Mac
+
+After securely injecting the Render external `DATABASE_URL` and Alpaca credentials
+into the current shell:
+
+```bash
+TRAFRIEND_ENV=production \
+TRAFRIEND_CORS_ORIGINS=https://www.trafriend.xyz \
+.venv/bin/python -m trafriend_api.scripts.run_daily_market_update
+```
+
+This runs the normal provider capture directly against Render PostgreSQL. It does
+not copy the local database and requires no Git operation or redeploy.
+
+### C. One-time production OHLC backfill
+
+```bash
+TRAFRIEND_ENV=production \
+TRAFRIEND_CORS_ORIGINS=https://www.trafriend.xyz \
+.venv/bin/python -m trafriend_api.scripts.capture_qqq_price_history \
+  --start 2026-06-08 \
+  --end 2026-09-04
+```
+
+Historical backfill is deliberate and bounded; it is not part of daily Cron.
+
+### D. Routine Render Cron update
+
+```bash
+python -m trafriend_api.scripts.run_daily_market_update
+```
+
+Render supplies all production environment values. No interactive flag or loop is
+used.
+
+### E. Production database migration when schema changes
+
+```bash
+alembic upgrade head
+```
+
+Run this only as part of a reviewed schema deployment. Routine data updates never
+run or create migrations.
+
+## 12. Validate the deployment
 
 From the Render backend shell, run the non-destructive checker without displaying
 secret values:
@@ -185,7 +275,7 @@ python -m trafriend_api.scripts.validate_deployment \
 It reports only SET/MISSING credential state, database connectivity, migration/table
 state, row counts, latest expected/available anchor dates, and `/health` status.
 
-## 12. End-to-end checklist
+## 13. End-to-end checklist
 
 1. Push the reviewed Git repository.
 2. Create Render PostgreSQL.

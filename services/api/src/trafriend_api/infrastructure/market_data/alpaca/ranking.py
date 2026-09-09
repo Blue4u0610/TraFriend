@@ -119,7 +119,15 @@ class AlpacaRankingDataProvider(RankingMarketDataProvider):
         self, symbols: Sequence[str], start: date, end: date
     ) -> list[RankingDailyBar]:
         start_at = datetime.combine(start, time.min, tzinfo=EASTERN)
-        end_at = datetime.combine(end + timedelta(days=1), time.min, tzinfo=EASTERN)
+        requested_end = datetime.combine(
+            end + timedelta(days=1), time.min, tzinfo=EASTERN
+        )
+        # Delayed SIP access rejects future/recent request boundaries. Limit the
+        # boundary, not the requested trading date, so a completed daily bar can
+        # be ranked without requesting restricted recent data.
+        end_at = min(requested_end, self._utc_now() - timedelta(minutes=20))
+        if end_at <= start_at:
+            return []
         page_token = None
         bars = []
         while True:

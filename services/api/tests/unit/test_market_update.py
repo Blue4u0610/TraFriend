@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
+from trafriend_api.application.services.daily_price import DailyPriceCaptureReport
 from trafriend_api.application.services.market_update import DailyMarketUpdateService
 from trafriend_api.application.services.universe import (
     CaptureItem,
@@ -89,6 +90,38 @@ class FakeCapture:
         return self.report
 
 
+class FakeOhlcCapture:
+    def __init__(self, report: DailyPriceCaptureReport) -> None:
+        self.report = report
+        self.calls: list[tuple[date, date]] = []
+
+    def capture(self, start: date, end: date) -> DailyPriceCaptureReport:
+        self.calls.append((start, end))
+        return self.report
+
+
+def _ohlc(
+    status: str = "COMPLETE",
+    *,
+    inserted: int = 0,
+    existing: int = 1,
+    unavailable: int = 0,
+    conflicts: int = 0,
+) -> DailyPriceCaptureReport:
+    return DailyPriceCaptureReport(
+        start=SESSION.trading_date,
+        end=SESSION.trading_date,
+        status=status,
+        symbols=1,
+        sessions=1,
+        inserted=inserted,
+        existing=existing,
+        unavailable=unavailable,
+        conflicts=conflicts,
+        results=(),
+    )
+
+
 def _capture(status: str, item_status: str) -> DailyCaptureReport:
     return DailyCaptureReport(
         trading_date="2026-09-04",
@@ -148,17 +181,21 @@ def _dataset(current: bool) -> PopularDataset:
 
 def test_weekend_or_holiday_rerun_skips_current_data() -> None:
     builder = FakeRankingBuilder()
+    ohlc = FakeOhlcCapture(_ohlc())
     report = DailyMarketUpdateService(
         calendar=FakeCalendar(),
         ranking_repository=FakeRepository(_dataset(current=True)),
         ranking_builder=builder,
         daily_close_capture=FakeCapture(_capture("COMPLETE", "EXISTING")),
+        daily_ohlc_capture=ohlc,
         now=lambda: NOW,
     ).run()
 
     assert report.status == "SKIPPED"
     assert report.ranking_status == "SKIPPED"
     assert report.daily_close_status == "SKIPPED"
+    assert report.ohlc_status == "EXISTING"
+    assert ohlc.calls == [(SESSION.trading_date, SESSION.trading_date)]
     assert builder.calls == 0
 
 
@@ -169,12 +206,14 @@ def test_new_session_updates_ranking_and_inserts_daily_close() -> None:
         ranking_repository=FakeRepository(_dataset(current=False)),
         ranking_builder=builder,
         daily_close_capture=FakeCapture(_capture("COMPLETE", "INSERTED")),
+        daily_ohlc_capture=FakeOhlcCapture(_ohlc(inserted=1, existing=0)),
         now=lambda: NOW,
     ).run()
 
     assert report.status == "COMPLETE"
     assert report.ranking_status == "UPDATED"
     assert report.daily_close_status == "COMPLETE"
+    assert report.ohlc_status == "INSERTED"
     assert builder.calls == 1
 
 
@@ -184,6 +223,7 @@ def test_zero_product_ranked_symbol_does_not_trigger_cron_retry() -> None:
         ranking_repository=FakeRepository(_dataset(current=True)),
         ranking_builder=FakeRankingBuilder(),
         daily_close_capture=FakeCapture(_capture_with_structural_skip()),
+        daily_ohlc_capture=FakeOhlcCapture(_ohlc()),
         now=lambda: NOW,
     ).run()
 
@@ -200,9 +240,42 @@ def test_provider_lag_is_explicitly_retryable() -> None:
         ranking_repository=FakeRepository(_dataset(current=True)),
         ranking_builder=FakeRankingBuilder(),
         daily_close_capture=FakeCapture(_capture("FAILED", "UNAVAILABLE")),
+        daily_ohlc_capture=FakeOhlcCapture(_ohlc()),
         now=lambda: NOW,
     ).run()
 
     assert report.status == "PARTIAL_RETRYABLE"
     assert report.daily_close_report.unavailable == 1
     assert _exit_code_for_status(report.status) == 2
+
+
+def test_ohlc_provider_lag_does_not_rollback_successful_daily_close() -> None:
+    report = DailyMarketUpdateService(
+        calendar=FakeCalendar(),
+        ranking_repository=FakeRepository(_dataset(current=True)),
+        ranking_builder=FakeRankingBuilder(),
+        daily_close_capture=FakeCapture(_capture("COMPLETE", "INSERTED")),
+        daily_ohlc_capture=FakeOhlcCapture(
+            _ohlc("PARTIAL_RETRYABLE", existing=0, unavailable=1)
+        ),
+        now=lambda: NOW,
+    ).run()
+
+    assert report.status == "PARTIAL_RETRYABLE"
+    assert report.daily_close_report is not None
+    assert report.daily_close_report.inserted == 1
+    assert report.ohlc_status == "PARTIAL_RETRYABLE"
+
+
+def test_conflict_is_not_classified_as_retryable() -> None:
+    report = DailyMarketUpdateService(
+        calendar=FakeCalendar(),
+        ranking_repository=FakeRepository(_dataset(current=True)),
+        ranking_builder=FakeRankingBuilder(),
+        daily_close_capture=FakeCapture(_capture("FAILED", "CONFLICT")),
+        daily_ohlc_capture=FakeOhlcCapture(_ohlc()),
+        now=lambda: NOW,
+    ).run()
+
+    assert report.status == "CONFLICT"
+    assert _exit_code_for_status(report.status) == 1

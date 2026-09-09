@@ -255,6 +255,24 @@ class UniverseService:
                 continue
             for relationship in relationships:
                 leveraged_symbols.add(relationship.leveraged_product.symbol)
+                try:
+                    existing = self._anchor_service.latest(relationship.id)
+                except AnchorUnavailableError:
+                    pass
+                else:
+                    items.append(
+                        CaptureItem(
+                            relationship_id=relationship.id,
+                            underlying_symbol=relationship.underlying.symbol,
+                            leveraged_product_symbol=(
+                                relationship.leveraged_product.symbol
+                            ),
+                            status="EXISTING",
+                            message="current anchor already persisted",
+                            anchor=existing,
+                        )
+                    )
+                    continue
                 if not self._capture_enabled:
                     items.append(
                         CaptureItem(

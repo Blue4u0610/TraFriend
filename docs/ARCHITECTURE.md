@@ -286,16 +286,27 @@ If the expected completed-session version is unavailable, partial, stale, mixed-
 
 Scheduling stays outside the request-serving web process.
 `run_daily_market_update` is the production orchestration entry point: it refreshes
-the current month-to-date ranking and then delegates Daily Close work to the
-existing idempotent popular-capture service. It asks the exchange calendar for the
-latest completed session on every invocation, so DST, holidays, weekends, and
-early closes are not encoded in cron time. An already-current invocation exits
-successfully as `SKIPPED`; a run containing only `INSERTED`, `EXISTING`, and
+the current month-to-date ranking, delegates Daily Close work to the existing
+idempotent popular-capture service, and captures the same completed session's
+independent QQQ-stock OHLC candles for the Profit Ratio page. It asks the exchange
+calendar for the latest completed session on every invocation, so DST, holidays,
+weekends, and early closes are not encoded in cron time. Current immutable anchors
+and OHLC bars are read before provider access, so a retry reports `EXISTING` without
+re-downloading successful data. An already-current invocation exits successfully as
+`SKIPPED`; a run containing only `INSERTED`, `EXISTING`, and
 `SKIPPED_NO_SUPPORTED_PRODUCT` outcomes is complete and exits zero. Provider
-publication lag or another supported-relationship failure is
-`PARTIAL_RETRYABLE`. The lower-level `capture_popular_daily_closes` command remains
-available for initialization and targeted operations. No command contains a
-persistent loop and FastAPI never starts a scheduler.
+publication lag or another supported-data failure is `PARTIAL_RETRYABLE`; a conflict
+is non-retryable and exits nonzero. Ranking, anchors, and OHLC use independent
+transaction boundaries, so one family can fail without rolling back another. The
+lower-level commands remain available for initialization and targeted operations.
+No command contains a persistent loop and FastAPI never starts a scheduler.
+
+Every data-writing command classifies only non-secret `DATABASE_URL` metadata. A
+local `trafriend_dev` target is accepted only with `TRAFRIEND_ENV=development`; a
+non-local target is accepted only with `TRAFRIEND_ENV=production`. Ambiguous or
+mismatched combinations fail before connecting or writing. This is an operational
+guard, not a second configuration source: commands always use the inherited
+`DATABASE_URL` exactly as supplied.
 
 Market rankings are calculated independently from the anchor workflow. `MarketRankingService` obtains Alpaca's active U.S.-equity asset universe through `RankingMarketDataProvider`, applies explicit security exclusions, requests raw SIP daily bars in batches, and calculates `SUM(daily VWAP * daily share volume)` only for symbols complete across every exchange-calendar session. The original September 2026 dataset retains its explicit `SEPTEMBER_TO_DATE` state; later incomplete periods use `MONTH_TO_DATE`. `MarketRankingRepository.replace_verified_rows` atomically replaces one effective period/type, preserving ranking/anchor separation and rerun idempotency. A source-attributed CSV importer remains as an alternate ingestion boundary.
 
@@ -345,9 +356,10 @@ The price-first correction adds independent `DailyPriceRepository` and
 instrument/trading date for display; ratio availability never gates price reads.
 OHLC and returns retain their own provenance and availability fields. Normal API
 composition wires repositories only. `capture_qqq_price_history` is the bounded
-historical/operational entry point; the existing `capture_profit_ratio` worker also
-invokes independent completed-day price capture, so its external schedule maintains
-both series without a FastAPI loop.
+historical/operational entry point. `run_daily_market_update` owns routine completed-
+session OHLC maintenance; `capture_profit_ratio` remains the separately runnable
+OPEN/CLOSE ratio-input diagnostic and also safely maintains OHLC when invoked. No
+worker invents a Profit Ratio when validated model inputs are absent.
 
 `bootstrap_production` seeds QQQ identity metadata only when empty, from the
 source-attributed 2026-09-04 bundled snapshot, and verifies nonzero searchable

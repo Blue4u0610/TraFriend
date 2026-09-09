@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs
 
@@ -74,6 +74,7 @@ def test_alpaca_ranking_provider_loads_assets_and_batches_vwap_bars() -> None:
         batch_size=2,
         trading_client=trading_client,
         data_client=data_client,
+        now=lambda: datetime(2026, 9, 1, 21, tzinfo=timezone.utc),
     )
 
     assets = provider.list_active_us_equities()
@@ -90,6 +91,7 @@ def test_alpaca_ranking_provider_loads_assets_and_batches_vwap_bars() -> None:
     assert first_query["feed"] == ["sip"]
     assert first_query["timeframe"] == ["1Day"]
     assert first_query["adjustment"] == ["raw"]
+    assert first_query["end"] == ["2026-09-01T20:40:00Z"]
     assert bars[0].vwap == Decimal("12.3456")
     assert bars[0].volume == Decimal("1000")
 

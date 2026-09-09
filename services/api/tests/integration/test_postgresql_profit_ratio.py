@@ -447,6 +447,44 @@ def test_postgresql_independent_daily_price_read_api_without_ratio_records(
     assert row["price_provider"] == "mock"
 
 
+def test_running_application_reads_new_daily_price_without_restart(
+    postgresql_context: ProfitRatioPostgreSQLContext,
+) -> None:
+    from trafriend_api.infrastructure.persistence.in_memory_profit_ratio import (
+        InMemoryProfitRatioRepository,
+    )
+
+    candidate = _daily_price_bar("DAILYDD")
+    member = NasdaqConstituent(
+        candidate.instrument_id,
+        candidate.symbol,
+        "Immediate visibility fixture",
+        TRADING_DATE,
+        "mock-daily-price-test",
+    )
+    price_repository = PostgreSQLDailyPriceRepository(postgresql_context.engine)
+    app = create_app(Settings())
+    app.state.profit_ratio_service = ProfitRatioService(
+        InMemoryProfitRatioRepository((member,)),
+        ProfitRatioExchangeCalendar(),
+        now=lambda: NOW,
+        price_repository=price_repository,
+    )
+    path = f"/api/v1/profit-ratio/symbols/{candidate.symbol}/daily"
+    params = {"start": str(TRADING_DATE), "end": str(TRADING_DATE)}
+
+    with TestClient(app) as client:
+        before = client.get(path, params=params)
+        price_repository.save(candidate)
+        after = client.get(path, params=params)
+
+    assert before.status_code == 200
+    assert before.json()["data"]["rows"][0]["price_status"] == "NOT_CAPTURED"
+    assert after.status_code == 200
+    assert after.json()["data"]["rows"][0]["price_status"] == "COMPLETE"
+    assert Decimal(after.json()["data"]["rows"][0]["close_price"]) == candidate.close
+
+
 @pytest.mark.parametrize("invalid_high", ["NaN", "Infinity", "80"])
 def test_postgresql_daily_ohlc_constraints_reject_nonfinite_or_wrong_order(
     postgresql_context: ProfitRatioPostgreSQLContext, invalid_high: str,

@@ -48,6 +48,12 @@ Useful local URLs:
 
 Without `DATABASE_URL`, the public API keeps deterministic in-memory Mock anchors and needs no market-data account or database. With `DATABASE_URL`, catalog search, ranking reads, and calculator anchors use PostgreSQL. Normal calculations never request Alpaca. A selected-symbol resolve may capture only a missing latest-session pair when `TRAFRIEND_DAILY_CLOSE_PROVIDER=alpaca`; the safe default remains `mock`.
 
+Data-writing commands classify their target before connecting. The inherited local
+URL is accepted as `DEVELOPMENT` only when it points to `localhost/trafriend_dev`
+and `TRAFRIEND_ENV` is `development` (the default). A non-local URL is accepted only
+with `TRAFRIEND_ENV=production`. Command output contains only the classification,
+host, and database name—never credentials or a full URL.
+
 ## Local PostgreSQL setup
 
 Check an existing installation before changing it:
@@ -160,6 +166,19 @@ make an otherwise successful run partial or retryable. The ranking row remains
 visible in the Popular API with a supported-product count of zero.
 
 An external cron or deployment scheduler may invoke this command after the regular session and retry publication lag. Do not put a loop or sleep in FastAPI and do not hardcode a UTC close time. The command always asks the exchange calendar, which handles DST, weekends, holidays, and early closes.
+
+For a complete local routine update, use the same orchestrator as production:
+
+```bash
+TRAFRIEND_ENV=development \
+.venv/bin/python -m trafriend_api.scripts.run_daily_market_update
+```
+
+It updates the latest completed session's MTD ranking, all eligible popular Daily
+Close Anchors, and QQQ-stock OHLC. Identical current anchors and OHLC are loaded from
+PostgreSQL without another provider request. This local execution updates only
+`trafriend_dev`; it can never refresh the deployed website. Production operations
+and safe commands are documented in `deployment.md`.
 
 ## Month-to-date market-ranking calculation
 

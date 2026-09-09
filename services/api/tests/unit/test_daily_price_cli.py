@@ -39,7 +39,7 @@ def test_daily_price_cli_is_independent_and_uses_safe_summary(
     )
     member = NasdaqConstituent("ins_nvda_xnas", "NVDA", "Nvidia", date(2026, 9, 4), "fixture")
     settings = Settings(
-        database_url="postgresql://fixture:fixture@localhost/test",
+        database_url="postgresql://fixture:fixture@localhost/trafriend_dev",
         alpaca_key_id="fixture-key",
         alpaca_secret_key="fixture-secret",
     )

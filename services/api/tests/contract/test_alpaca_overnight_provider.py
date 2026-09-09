@@ -270,7 +270,7 @@ def test_alpaca_batches_unadjusted_sip_daily_close_bars() -> None:
     assert query["feed"] == ["sip"]
     assert query["adjustment"] == ["raw"]
     assert query["start"] == ["2026-09-04T04:00:00Z"]
-    assert query["end"] == ["2026-09-05T04:00:00Z"]
+    assert query["end"] == ["2026-09-04T20:40:00Z"]
     assert [bar.close for bar in bars] == [Decimal("1740"), Decimal("17.36")]
     assert all(bar.trading_date == date(2026, 9, 4) for bar in bars)
     assert all(bar.quality == DailyCloseQuality.DELAYED for bar in bars)

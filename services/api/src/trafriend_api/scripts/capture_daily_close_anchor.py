@@ -17,6 +17,9 @@ from trafriend_api.domain.errors import (
 from trafriend_api.infrastructure.calendar import NyseTradingCalendar
 from trafriend_api.infrastructure.persistence import PostgreSQLDailyCloseAnchorRepository
 from trafriend_api.infrastructure.persistence.database import create_database_engine
+from trafriend_api.infrastructure.persistence.database_target import (
+    require_writable_database_target,
+)
 from trafriend_api.scripts.validate_daily_close_anchor import (
     _build_provider,
     _relationship,
@@ -66,6 +69,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             underlying, leveraged_product, signed_leverage
         )
         database_url = settings.database_url.get_secret_value()
+        target = require_writable_database_target(database_url, settings.environment)
         engine = create_database_engine(database_url)
         repository = PostgreSQLDailyCloseAnchorRepository(engine)
         service = DailyCloseAnchorService(
@@ -81,6 +85,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             signed_leverage,
         )
         anchor = result.anchor
+        print(f"Data Target: {target.environment.value}")
+        print(f"Database Host: {target.host}")
+        print(f"Database Name: {target.database}")
         print(f"Capture Result: {result.outcome.value}")
         print(f"Anchor ID: {anchor.id}")
         print(f"Anchor Version: {anchor.version}")

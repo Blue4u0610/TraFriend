@@ -14,6 +14,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from trafriend_api.domain.profit_ratio_daily import ProfitRatioConflictError
 from trafriend_api.infrastructure.catalog.qqq_initialization import ensure_qqq_constituents
 from trafriend_api.infrastructure.persistence.database import create_database_engine
+from trafriend_api.infrastructure.persistence.database_target import (
+    require_writable_database_target,
+)
 from trafriend_api.infrastructure.persistence.models import (
     LeveragedProductRecord,
     UnderlyingRecord,
@@ -79,6 +82,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         settings = Settings.from_environment()
         if settings.database_url is None:
             raise ValueError("DATABASE_URL is required")
+        database_url = settings.database_url.get_secret_value()
+        target = require_writable_database_target(database_url, settings.environment)
         alembic_config = Config("alembic.ini")
         command.upgrade(alembic_config, "head")
         expected_revision = ScriptDirectory.from_config(
@@ -86,11 +91,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ).get_current_head()
         if expected_revision is None:
             raise ValueError("Alembic has no current migration head")
-        engine = create_database_engine(settings.database_url.get_secret_value())
+        engine = create_database_engine(database_url)
         # Initialize source-attributed identity metadata outside migrations and
         # request handlers. A missing ratio or Alpaca entitlement cannot hide search.
         members = ensure_qqq_constituents(engine)
         report = inspect_bootstrap(engine, expected_revision)
+        print(f"Data Target: {target.environment.value}")
+        print(f"Database Host: {target.host}")
+        print(f"Database Name: {target.database}")
         print("Bootstrap Status: READY")
         print(f"Migration Revision: {report.revision}")
         print(f"Underlying Rows: {report.underlyings}")

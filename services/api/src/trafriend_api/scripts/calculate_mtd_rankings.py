@@ -16,6 +16,9 @@ from trafriend_api.infrastructure.catalog import PostgreSQLLeveragedUniverseRepo
 from trafriend_api.infrastructure.market_data.alpaca import AlpacaRankingDataProvider
 from trafriend_api.infrastructure.persistence import PostgreSQLMarketRankingRepository
 from trafriend_api.infrastructure.persistence.database import create_database_engine
+from trafriend_api.infrastructure.persistence.database_target import (
+    require_writable_database_target,
+)
 from trafriend_api.settings import Settings
 
 UTC = timezone.utc
@@ -77,10 +80,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             session = calendar.latest_completed_session(datetime.now(UTC))
             year, month = session.trading_date.year, session.trading_date.month
-        engine = create_database_engine(settings.database_url.get_secret_value())
+        database_url = settings.database_url.get_secret_value()
+        target = require_writable_database_target(database_url, settings.environment)
+        engine = create_database_engine(database_url)
         report = build_ranking_service(settings, engine, calendar).build_month_to_date(
             year, month
         )
+        print(f"Data Target: {target.environment.value}")
+        print(f"Database Host: {target.host}")
+        print(f"Database Name: {target.database}")
         print(f"Dataset Status: {report.rows[0].period_status.value}")
         print(f"Ranking Period: {report.ranking_period}")
         print(

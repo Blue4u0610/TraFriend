@@ -16,6 +16,9 @@ from trafriend_api.domain.universe import (
 )
 from trafriend_api.infrastructure.persistence import PostgreSQLMarketRankingRepository
 from trafriend_api.infrastructure.persistence.database import create_database_engine
+from trafriend_api.infrastructure.persistence.database_target import (
+    require_writable_database_target,
+)
 from trafriend_api.settings import Settings
 
 UTC = timezone.utc
@@ -67,9 +70,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.source,
             calculated_at,
         )
-        engine = create_database_engine(settings.database_url.get_secret_value())
-        imported = PostgreSQLMarketRankingRepository(engine).replace_verified_rows(rows)
-        engine.dispose()
+        database_url = settings.database_url.get_secret_value()
+        target = require_writable_database_target(database_url, settings.environment)
+        engine = create_database_engine(database_url)
+        try:
+            imported = PostgreSQLMarketRankingRepository(engine).replace_verified_rows(rows)
+        finally:
+            engine.dispose()
+        print(f"Data Target: {target.environment.value}")
+        print(f"Database Host: {target.host}")
+        print(f"Database Name: {target.database}")
         print(f"Imported Ranking Rows: {imported}")
         print(f"Ranking Period: {args.period}")
         print(f"Period Status: {args.period_status}")

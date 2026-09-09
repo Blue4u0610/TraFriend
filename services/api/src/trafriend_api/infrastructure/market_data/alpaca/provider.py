@@ -280,7 +280,16 @@ class AlpacaMarketDataProvider(
         if start > end:
             raise ValueError("daily bar start cannot follow end")
         start_at = datetime.combine(start, time.min, tzinfo=EASTERN)
-        end_at = datetime.combine(end + timedelta(days=1), time.min, tzinfo=EASTERN)
+        requested_end = datetime.combine(
+            end + timedelta(days=1), time.min, tzinfo=EASTERN
+        )
+        # Alpaca's delayed SIP entitlement rejects a request whose *end boundary*
+        # reaches into the most recent/future window, even when the desired daily
+        # bar itself is already complete. Bound the request to the provider delay;
+        # the daily bar timestamp at New York midnight remains inside the range.
+        end_at = min(requested_end, self._utc_now() - timedelta(minutes=20))
+        if end_at <= start_at:
+            return ()
         bars = []
         page_token = None
         while True:
