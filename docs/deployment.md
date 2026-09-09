@@ -181,21 +181,22 @@ secret environment:
 - Root Directory: `services/api`
 - Build Command: `pip install .`
 - Run Command: `python -m trafriend_api.scripts.run_daily_market_update`
-- Schedule: `30 22,23 * * 1-5` (Render cron schedules use UTC)
+- Schedule: `30 17,18,20,21,22 * * 1-5` (Render cron schedules use UTC)
 - Environment: the same production `DATABASE_URL`, Alpaca credentials,
   `TRAFRIEND_ENV=production`, and safe `TRAFRIEND_CORS_ORIGINS` used by the backend;
   no frontend variables
 
-The two late UTC wake-ups provide one automatic retry while remaining safely after
-the regular close in both daylight and standard time. The command—not the cron
+The five weekday wake-ups cover NYSE early closes and normal closes in both daylight
+and standard time, with a final publication-lag retry. The command—not the cron
 expression—asks the NYSE calendar for the latest completed session, including
-holidays and early closes. The first successful run updates MTD rankings, Daily Close
-Anchors, and QQQ-stock daily OHLC; the second sees immutable current rows and avoids
-duplicate provider reads. A weekend, holiday, or current rerun reports `SKIPPED` and
-exits zero. Missing or delayed provider data reports `PARTIAL_RETRYABLE` and exits 2
-without substituting an older session. Zero-product ranked symbols are successful
-structural skips and never cause retry status. FastAPI contains no scheduler or
-infinite loop.
+holidays and early closes. A wake-up before the next session has completed is an
+idempotent current-session check; it does not manufacture a new trading date. The
+first successful run updates MTD rankings, Daily Close Anchors, and QQQ-stock daily
+OHLC; later wake-ups see immutable current rows and avoid duplicate provider reads. A
+weekend, holiday, or current rerun reports `SKIPPED` and exits zero. Missing or delayed
+provider data reports `PARTIAL_RETRYABLE` and exits 2 without substituting an older
+session. Zero-product ranked symbols are successful structural skips and never cause
+retry status. FastAPI contains no scheduler or infinite loop.
 
 The command prints only `PRODUCTION`/`DEVELOPMENT`, database hostname, database name,
 trading date, ranking status, and concise anchor/OHLC counters. It never prints the
