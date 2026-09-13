@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Activity, Calculator, ChartNoAxesCombined } from "lucide-react";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
@@ -28,8 +29,15 @@ export function SiteHeader() {
           className="group flex items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={t.header.dashboardAria}
         >
-          <span className="grid size-9 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary shadow-[0_0_24px_color-mix(in_oklab,var(--primary)_16%,transparent)]">
-            <ChartNoAxesCombined className="size-5" aria-hidden="true" />
+          <span className="size-9 shrink-0 overflow-hidden rounded-xl ring-1 ring-primary/25 shadow-[0_0_24px_color-mix(in_oklab,var(--primary)_16%,transparent)]">
+            <Image
+              src="/brand/trafriend-mark-96.png"
+              width={36}
+              height={36}
+              alt=""
+              unoptimized
+              loading="eager"
+            />
           </span>
           <span className="hidden text-lg font-semibold tracking-[-0.03em] sm:inline">
             TraFriend
