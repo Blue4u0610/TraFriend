@@ -10,6 +10,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: profitRatioPage.metadataTitle,
     description: profitRatioPage.metadataDescription,
+    alternates: {
+      canonical: "/tools/profit-ratio",
+    },
   };
 }
 

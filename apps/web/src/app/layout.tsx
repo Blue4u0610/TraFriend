@@ -20,11 +20,16 @@ const geistMono = Geist_Mono({
 export async function generateMetadata(): Promise<Metadata> {
   const { metadata } = await getDictionary();
   return {
+    metadataBase: new URL("https://www.trafriend.xyz"),
     title: {
       default: metadata.defaultTitle,
       template: metadata.titleTemplate,
     },
     description: metadata.description,
+    robots: {
+      index: true,
+      follow: true,
+    },
   };
 }
 

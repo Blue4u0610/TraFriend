@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -22,6 +23,12 @@ import {
 import { interpolate } from "@/i18n/dictionaries";
 import { getDictionary } from "@/i18n/server";
 import { cn } from "@/lib/utils";
+
+export const metadata: Metadata = {
+  alternates: {
+    canonical: "/",
+  },
+};
 
 export default async function DashboardPage() {
   const t = await getDictionary();

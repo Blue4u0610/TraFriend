@@ -10,6 +10,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: leveragePage.metadataTitle,
     description: leveragePage.metadataDescription,
+    alternates: {
+      canonical: "/tools/leverage",
+    },
   };
 }
 
