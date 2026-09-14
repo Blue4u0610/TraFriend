@@ -148,6 +148,16 @@ describe("QQQ daily Profit Ratio dashboard", () => {
     expect(screen.getByText(/Pending/)).toBeTruthy();
   });
 
+  it("labels unknown provider quality without calling available data unavailable", async () => {
+    daily.mockResolvedValue(envelope(history({
+      provider: "futu",
+      status: "PARTIAL",
+      rows: [{ ...row, close_ratio: null, quality: "UNKNOWN", status: "PARTIAL" }],
+    })));
+    renderDashboard(); await selectStock();
+    expect(within(await screen.findByRole("table")).getByText(/Quality unverified/)).toBeTruthy();
+  });
+
   it("has an explicit empty history state", async () => {
     daily.mockResolvedValue(envelope(history({ status: "EMPTY", rows: [] })));
     renderDashboard(); await selectStock();

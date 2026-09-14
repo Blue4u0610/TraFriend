@@ -31,6 +31,7 @@ function stateLabel(value: string, t: Labels) {
   if (key === "WARMUP" || key === "DATA_INSUFFICIENT") return t.insufficient;
   if (key === "DELAYED") return t.delayed;
   if (key === "REALTIME") return t.realtime;
+  if (key === "UNKNOWN") return t.unknown;
   if (key === "MIXED") return t.mixed;
   if (key === "PROVENANCE_MISMATCH") return t.provenanceMismatch;
   if (key === "NOT_CAPTURED" || key === "EMPTY") return t.notCaptured;
