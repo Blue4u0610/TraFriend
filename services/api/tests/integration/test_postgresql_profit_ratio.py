@@ -19,7 +19,10 @@ from trafriend_api.application.ports.profit_ratio import (
     ProfitRatioCaptureProvider,
     ProfitRatioPersistenceOutcome,
 )
-from trafriend_api.application.services.profit_ratio import ProfitRatioService
+from trafriend_api.application.services.profit_ratio import (
+    FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY,
+    ProfitRatioService,
+)
 from trafriend_api.domain.daily_price import DailyPriceBar, DailyPriceConflictError
 from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
@@ -147,6 +150,30 @@ def _record(
     )
 
 
+def _futu_record(symbol: str, ratio: str) -> ProfitRatioRecord:
+    candidate = _record(symbol, ratio, ProfitRatioPhase.CLOSE, "101.25")
+    market_timestamp = datetime(2026, 9, 4, 19, 59, tzinfo=UTC)
+    return replace(
+        candidate,
+        observation=replace(
+            candidate.observation,
+            market_timestamp=market_timestamp,
+            provider="futu",
+            source_feed="stock-screen-v2+market-snapshot",
+            quality="UNKNOWN",
+            status=ProfitRatioStatus.REPORTED,
+            methodology_key=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+            methodology_version=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+        ),
+        price=replace(
+            candidate.price,
+            market_timestamp=market_timestamp,
+            provider="futu",
+            source_feed="stock-screen-v2+market-snapshot",
+        ),
+    )
+
+
 def _counts(context: ProfitRatioPostgreSQLContext, instrument_id: str) -> tuple[int, int]:
     with context.engine.connect() as connection:
         prices = connection.scalar(text(
@@ -234,6 +261,39 @@ def test_postgresql_ratio_conflicts_do_not_change_price_or_append_observation(
     assert _counts(postgresql_context, stored.price.instrument_id) == (1, 1)
     assert repository.latest(stored.price.instrument_id, TRADING_DATE,
                              ProfitRatioPhase.CLOSE) == stored
+
+
+def test_postgresql_futu_method_coexists_with_legacy_method_and_survives_recreation(
+    postgresql_context: ProfitRatioPostgreSQLContext,
+) -> None:
+    repository = PostgreSQLProfitRatioRepository(postgresql_context.engine)
+    legacy = repository.save(_record("METHOD", phase=ProfitRatioPhase.OPEN)).record
+    futu = repository.save(_futu_record("METHOD", "0.81234")).record
+
+    assert repository.latest(
+        legacy.price.instrument_id, TRADING_DATE, ProfitRatioPhase.OPEN
+    ) == legacy
+    assert repository.latest(
+        futu.price.instrument_id,
+        TRADING_DATE,
+        ProfitRatioPhase.CLOSE,
+        FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+        FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+    ) == futu
+    assert _counts(postgresql_context, futu.price.instrument_id) == (2, 2)
+
+    recreated_engine = postgresql_context.new_engine()
+    try:
+        history = PostgreSQLProfitRatioRepository(recreated_engine).history(
+            futu.price.instrument_id,
+            TRADING_DATE,
+            TRADING_DATE,
+            FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+            FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+        )
+        assert history == (futu,)
+    finally:
+        recreated_engine.dispose()
 
 
 def test_postgresql_failed_observation_insert_rolls_back_new_price(

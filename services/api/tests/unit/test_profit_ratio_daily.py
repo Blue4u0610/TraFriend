@@ -10,7 +10,10 @@ from trafriend_api.application.ports.profit_ratio import (
     ProfitRatioPersistenceOutcome,
     ProfitRatioSessionCalendar,
 )
-from trafriend_api.application.services.profit_ratio import ProfitRatioService
+from trafriend_api.application.services.profit_ratio import (
+    FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY,
+    ProfitRatioService,
+)
 from trafriend_api.domain.errors import MarketDataProviderError, ResourceNotFoundError
 from trafriend_api.domain.profit_ratio_daily import (
     ChipDistribution,
@@ -327,6 +330,51 @@ def test_capture_retry_avoids_provider_calls_and_does_not_duplicate() -> None:
     assert len(repository.history(MEMBER.instrument_id, DAY, DAY)) == 1
 
 
+def test_provider_reported_ratio_uses_separate_methodology_and_is_idempotent() -> None:
+    repository = InMemoryProfitRatioRepository((MEMBER,))
+    repository.save(record())
+    market_timestamp = SESSION.opened_at + timedelta(minutes=20)
+    futu_price = replace(
+        price(),
+        market_timestamp=market_timestamp,
+        provider="futu",
+        source_feed="stock-screen-v2+market-snapshot",
+    )
+    capture = ProfitRatioCaptureInput(
+        price=futu_price,
+        quality="UNKNOWN",
+        reported_ratio=Decimal("0.81234"),
+        methodology_key=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+        methodology_version=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+    )
+    provider = Provider((capture,))
+    application = ProfitRatioService(
+        repository,
+        Calendar(),
+        provider,
+        now=lambda: NOW,
+        methodology=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY,
+    )
+
+    first = application.capture(DAY, ProfitRatioPhase.OPEN)
+    second = application.capture(DAY, ProfitRatioPhase.OPEN)
+
+    assert first.inserted == 1 and first.status == "COMPLETE"
+    assert second.existing == 1 and len(provider.calls) == 1
+    stored = repository.latest(
+        MEMBER.instrument_id,
+        DAY,
+        ProfitRatioPhase.OPEN,
+        FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+        FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+    )
+    assert stored is not None
+    assert stored.observation.ratio == Decimal("0.81234")
+    assert stored.observation.status == ProfitRatioStatus.REPORTED
+    assert stored.observation.market_timestamp == market_timestamp
+    assert repository.latest(MEMBER.instrument_id, DAY, ProfitRatioPhase.OPEN) is not None
+
+
 def test_insufficient_observation_can_append_estimated_version_without_overwrite() -> None:
     repository = InMemoryProfitRatioRepository((MEMBER,))
     original = repository.save(record())
@@ -335,7 +383,8 @@ def test_insufficient_observation_can_append_estimated_version_without_overwrite
     assert original.record.observation.ratio is None
     assert upgraded.outcome == ProfitRatioPersistenceOutcome.UPGRADED
     assert upgraded.record.observation.version == 2
-    assert len(repository._records[(MEMBER.instrument_id, DAY, ProfitRatioPhase.OPEN)]) == 2
+    key = (MEMBER.instrument_id, DAY, ProfitRatioPhase.OPEN, "CHIP_TURNOVER", "1")
+    assert len(repository._records[key]) == 2
     assert len(repository.history(MEMBER.instrument_id, DAY, DAY)) == 1
 
 

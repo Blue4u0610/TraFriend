@@ -5,7 +5,10 @@
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4, and shadcn/ui.
 - Backend: Python 3.9+, FastAPI, Pydantic 2, Uvicorn, SQLAlchemy 2, Alembic, psycopg 3, and pytest.
 - Data: deterministic in-memory Mock mode when `DATABASE_URL` is absent; PostgreSQL-backed universe metadata, rankings, and Daily Close Anchors when it is set; optional Alpaca REST capture and overnight diagnostics.
-- Not included: Futu/OpenD, an in-process scheduler, authentication, or Profit Ratio production data.
+- Optional worker integration: official Futu OpenD for forward-only, provider-reported
+  Profit Ratio observations. OpenD is never called by FastAPI reads.
+- Not included: an in-process scheduler, authentication, or reconstructed historical
+  Profit Ratio data.
 
 The frontend and backend run as separate applications. Their dependencies and commands are intentionally independent.
 
@@ -13,7 +16,9 @@ The frontend and backend run as separate applications. Their dependencies and co
 
 - Node.js 22 LTS and npm.
 - Python 3.9 or later.
-- PostgreSQL for persistent Daily Close Anchors. A GUI client is optional and not required.
+- PostgreSQL for persistent Daily Close Anchors and analytics observations.
+- For real Profit Ratio capture only: Futu OpenD running locally, logged in, and
+  entitled for the required U.S. data. The website does not need OpenD to read data.
 
 Verify the runtimes:
 

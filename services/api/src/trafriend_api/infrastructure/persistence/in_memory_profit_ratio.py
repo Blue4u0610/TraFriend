@@ -23,7 +23,9 @@ from trafriend_api.domain.profit_ratio_daily import (
 class InMemoryProfitRatioRepository(ProfitRatioRepository):
     def __init__(self, constituents: Sequence[NasdaqConstituent] = ()) -> None:
         self._snapshots: dict[date, tuple[NasdaqConstituent, ...]] = {}
-        self._records: dict[tuple[str, date, ProfitRatioPhase], list[ProfitRatioRecord]] = {}
+        self._records: dict[
+            tuple[str, date, ProfitRatioPhase, str, str], list[ProfitRatioRecord]
+        ] = {}
         if constituents:
             self.save_constituents(constituents)
 
@@ -47,16 +49,38 @@ class InMemoryProfitRatioRepository(ProfitRatioRepository):
         self._snapshots[as_of] = snapshot
 
     def latest(
-        self, instrument_id: str, trading_date: date, phase: ProfitRatioPhase
+        self,
+        instrument_id: str,
+        trading_date: date,
+        phase: ProfitRatioPhase,
+        methodology_key: str = "CHIP_TURNOVER",
+        methodology_version: str = "1",
     ) -> Optional[ProfitRatioRecord]:
-        versions = self._records.get((instrument_id, trading_date, phase), [])
+        versions = self._records.get(
+            (instrument_id, trading_date, phase, methodology_key, methodology_version), []
+        )
         return versions[-1] if versions else None
 
-    def history(self, instrument_id: str, start: date, end: date) -> Sequence[ProfitRatioRecord]:
+    def history(
+        self,
+        instrument_id: str,
+        start: date,
+        end: date,
+        methodology_key: str = "CHIP_TURNOVER",
+        methodology_version: str = "1",
+    ) -> Sequence[ProfitRatioRecord]:
         records = [
             versions[-1]
-            for (stored_id, trading_date, _phase), versions in self._records.items()
+            for (
+                stored_id,
+                trading_date,
+                _phase,
+                stored_methodology_key,
+                stored_methodology_version,
+            ), versions in self._records.items()
             if stored_id == instrument_id and start <= trading_date <= end
+            and stored_methodology_key == methodology_key
+            and stored_methodology_version == methodology_version
         ]
         return tuple(
             sorted(
@@ -70,9 +94,13 @@ class InMemoryProfitRatioRepository(ProfitRatioRepository):
 
     def save(self, record: ProfitRatioRecord) -> ProfitRatioPersistenceResult:
         observation = record.observation
-        if (observation.methodology_key, observation.methodology_version) != ("CHIP_TURNOVER", "1"):
-            raise ValueError("unsupported Profit Ratio methodology")
-        key = (observation.instrument_id, observation.trading_date, observation.phase)
+        key = (
+            observation.instrument_id,
+            observation.trading_date,
+            observation.phase,
+            observation.methodology_key,
+            observation.methodology_version,
+        )
         versions = self._records.setdefault(key, [])
         outcome = ProfitRatioPersistenceOutcome.INSERTED
         if versions:

@@ -21,17 +21,25 @@ from trafriend_api.domain.profit_ratio_daily import (
     ProfitRatioConflictError,
     ProfitRatioObservation,
     ProfitRatioPhase,
+    ProfitRatioPriceObservation,
     ProfitRatioRecord,
     ProfitRatioSession,
     ProfitRatioStatus,
     calculate_endpoint,
 )
 
-METHODOLOGY = ProfitRatioMethodology(
+CHIP_TURNOVER_METHODOLOGY = ProfitRatioMethodology(
     id="CHIP_TURNOVER",
     version="1",
     display_name="TraFriend experimental turnover-cost estimate",
 )
+FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY = ProfitRatioMethodology(
+    id="FUTU_CHIPS_PROFIT_RATIO",
+    version="1",
+    display_name="Futu reported chip profit ratio",
+)
+# Compatibility alias retained for existing callers and fixtures.
+METHODOLOGY = CHIP_TURNOVER_METHODOLOGY
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,7 @@ class ProfitRatioService:
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         publication_delay: timedelta = timedelta(minutes=20),
         price_repository: Optional[DailyPriceRepository] = None,
+        methodology: ProfitRatioMethodology = CHIP_TURNOVER_METHODOLOGY,
     ) -> None:
         if publication_delay < timedelta(0):
             raise ValueError("publication delay cannot be negative")
@@ -124,6 +133,7 @@ class ProfitRatioService:
         self._now = now
         self._publication_delay = publication_delay
         self._price_repository = price_repository
+        self._methodology = methodology
 
     def search(self, query: str, limit: int = 25) -> Sequence[NasdaqConstituent]:
         query = query.strip().upper()
@@ -150,7 +160,13 @@ class ProfitRatioService:
             raise ValueError("daily history supports ordered ranges up to 366 days")
         constituent = self._constituent(symbol)
         now = self._utc_now()
-        records = self._repository.history(constituent.instrument_id, start, end)
+        records = self._repository.history(
+            constituent.instrument_id,
+            start,
+            end,
+            self._methodology.id,
+            self._methodology.version,
+        )
         price_bars = (
             self._price_repository.history(constituent.instrument_id, start, end)
             if self._price_repository is not None
@@ -164,8 +180,8 @@ class ProfitRatioService:
         by_phase = {
             (item.observation.trading_date, item.observation.phase): item
             for item in records
-            if item.observation.methodology_key == METHODOLOGY.id
-            and item.observation.methodology_version == METHODOLOGY.version
+            if item.observation.methodology_key == self._methodology.id
+            and item.observation.methodology_version == self._methodology.version
         }
         rows: list[ProfitRatioDailyRow] = []
         gaps: list[ProfitRatioGap] = []
@@ -230,7 +246,7 @@ class ProfitRatioService:
         return ProfitRatioDailyHistory(
             symbol=constituent.symbol,
             instrument_id=constituent.instrument_id,
-            methodology=METHODOLOGY,
+            methodology=self._methodology,
             provider=next(iter(providers))
             if len(providers) == 1
             else "mixed"
@@ -261,7 +277,13 @@ class ProfitRatioService:
         pending: list[NasdaqConstituent] = []
         insufficient = 0
         for member in members:
-            existing = self._repository.latest(member.instrument_id, trading_date, phase)
+            existing = self._repository.latest(
+                member.instrument_id,
+                trading_date,
+                phase,
+                self._methodology.id,
+                self._methodology.version,
+            )
             if existing is not None and (
                 existing.observation.ratio is not None or not retry_insufficient
             ):
@@ -308,15 +330,19 @@ class ProfitRatioService:
                         trading_date=trading_date,
                         phase=phase,
                         ratio=model.ratio,
-                        market_timestamp=session.instant(phase),
+                        market_timestamp=capture_input.price.market_timestamp,
                         observed_at=captured_at,
                         provider=capture_input.price.provider,
                         source_feed=capture_input.price.source_feed,
                         quality=capture_input.quality,
-                        status=ProfitRatioStatus.ESTIMATED
+                        status=ProfitRatioStatus.REPORTED
+                        if capture_input.reported_ratio is not None
+                        else ProfitRatioStatus.ESTIMATED
                         if model.ratio is not None
                         else ProfitRatioStatus.DATA_INSUFFICIENT,
                         reason_code=model.reason_code,
+                        methodology_key=capture_input.methodology_key,
+                        methodology_version=capture_input.methodology_version,
                     )
                     try:
                         saved = self._repository.save(
@@ -376,8 +402,8 @@ class ProfitRatioService:
             raise ValueError("clock must return a timezone-aware instant")
         return value.astimezone(timezone.utc)
 
-    @staticmethod
     def _valid_input(
+        self,
         inputs: ProfitRatioCaptureInput,
         member: NasdaqConstituent,
         session: ProfitRatioSession,
@@ -390,11 +416,38 @@ class ProfitRatioService:
             and price.symbol == member.symbol
             and price.trading_date == session.trading_date
             and price.phase == phase
-            and price.market_timestamp == session.instant(phase)
+            and ProfitRatioService._valid_market_timestamp(price, session, phase)
             and price.observed_at <= now
             and (inputs.float_snapshot is None or inputs.float_snapshot.observed_at <= now)
-            and inputs.quality in {"REALTIME", "DELAYED", "MOCK"}
-            and (price.provider == "mock" or price.source_feed == "sip")
+            and inputs.quality in {"REALTIME", "DELAYED", "UNKNOWN", "MOCK"}
+            and inputs.methodology_key == self._methodology.id
+            and inputs.methodology_version == self._methodology.version
+            and (
+                price.provider == "mock"
+                or price.source_feed == "sip"
+                or (
+                    price.provider == "futu"
+                    and price.source_feed == "stock-screen-v2+market-snapshot"
+                )
+            )
+        )
+
+    @staticmethod
+    def _valid_market_timestamp(
+        price: ProfitRatioPriceObservation,
+        session: ProfitRatioSession,
+        phase: ProfitRatioPhase,
+    ) -> bool:
+        if price.provider != "futu":
+            return price.market_timestamp == session.instant(phase)
+        if phase == ProfitRatioPhase.OPEN:
+            return session.opened_at <= price.market_timestamp <= session.opened_at + timedelta(
+                minutes=35
+            )
+        return (
+            session.closed_at - timedelta(minutes=15)
+            <= price.market_timestamp
+            <= session.closed_at
         )
 
     @staticmethod

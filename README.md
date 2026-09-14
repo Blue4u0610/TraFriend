@@ -79,7 +79,7 @@ TraFriend 保留 Alpaca BOATS 隔夜开盘、快照与历史数据诊断能力�
 
 ### 获利比
 
-TraFriend 计划展示当前与历史获利比，并配合价格序列观察变化。获利比取决于具体数据提供方和计算方法；在正式采用真实数据前，必须明确并展示 methodology、版本、时间、交易日与质量状态。系统不会猜测定义、填补缺失值或混合不兼容的方法版本。
+TraFriend 可将富途 OpenD 当前提供的筹码获利比例，在开盘和收盘的指定窗口采样后与价格日 K 对照展示。该数值按 `FUTU_CHIPS_PROFIT_RATIO/1` 独立存储；它取决于提供方方法，不代表获利投资者人数。系统不会猜测历史值、填补缺口或混合不兼容的方法版本。
 
 ---
 
@@ -130,7 +130,7 @@ TraFriend retains Alpaca BOATS overnight-open, snapshot, and historical diagnost
 
 ### Profit Ratio
 
-TraFriend plans to show current and historical Profit Ratio observations alongside prices. Profit Ratio is provider- and methodology-dependent. A real implementation must display methodology/version, observation time, trading date, provenance, and quality; it must not guess definitions, fill gaps silently, or merge incompatible methodologies.
+TraFriend can sample Futu OpenD's current chip profit ratio in designated open and close windows and compare those observations with daily price candles. The value is stored independently as `FUTU_CHIPS_PROFIT_RATIO/1`; it is provider-methodology-dependent and is not a count of profitable investors. TraFriend does not invent history, fill gaps, or merge incompatible methodologies.
 
 ## Disclaimer
 

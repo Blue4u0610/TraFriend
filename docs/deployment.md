@@ -233,6 +233,29 @@ TRAFRIEND_CORS_ORIGINS=https://www.trafriend.xyz \
 This runs the normal provider capture directly against Render PostgreSQL. It does
 not copy the local database and requires no Git operation or redeploy.
 
+### B.1 Unattended Mac Futu capture
+
+After the Futu migration and worker code are deployed, configure the Render external
+database URL and Alpaca credentials in the logged-in user's macOS Keychain. The
+interactive command hides all inputs and rejects the inherited local development URL:
+
+```bash
+./ops/macos/configure_profit_ratio_keychain.zsh
+./ops/macos/install_profit_ratio_launch_agents.zsh
+```
+
+The launchd job checks at 09:50/10:20, 13:20/13:50, and 16:20/16:50 in the Mac's
+America/New_York timezone. The application calendar accepts only actual OPEN/CLOSE
+windows, so weekends, holidays, normal-close checks on early-close days, and retries
+remain finite and idempotent. It starts the locally installed OpenD when necessary,
+writes directly to production PostgreSQL, then the existing database-only API exposes
+new rows without a build or restart.
+
+The separate keep-awake agent prevents idle sleep. Keep the Mac powered, logged in,
+on automatic New York time, and network-connected. OpenD password/verification
+prompts are never automated. Logs live at `~/Library/Logs/TraFriend` and contain
+status/counters only, not secret values.
+
 ### C. One-time production OHLC backfill
 
 ```bash

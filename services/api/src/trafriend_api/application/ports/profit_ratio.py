@@ -39,12 +39,24 @@ class ProfitRatioRepository(ABC):
 
     @abstractmethod
     def latest(
-        self, instrument_id: str, trading_date: date, phase: ProfitRatioPhase
+        self,
+        instrument_id: str,
+        trading_date: date,
+        phase: ProfitRatioPhase,
+        methodology_key: str = "CHIP_TURNOVER",
+        methodology_version: str = "1",
     ) -> Optional[ProfitRatioRecord]:
         raise NotImplementedError
 
     @abstractmethod
-    def history(self, instrument_id: str, start: date, end: date) -> Sequence[ProfitRatioRecord]:
+    def history(
+        self,
+        instrument_id: str,
+        start: date,
+        end: date,
+        methodology_key: str = "CHIP_TURNOVER",
+        methodology_version: str = "1",
+    ) -> Sequence[ProfitRatioRecord]:
         """Latest immutable version for each date/phase, never gap filling."""
         raise NotImplementedError
 

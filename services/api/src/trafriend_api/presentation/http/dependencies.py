@@ -16,7 +16,11 @@ from trafriend_api.application.ports.profit_ratio import ProfitRatioRepository
 from trafriend_api.application.ports.ranking import MarketRankingRepository
 from trafriend_api.application.services.daily_close_anchor import DailyCloseAnchorService
 from trafriend_api.application.services.market_data import MarketDataService
-from trafriend_api.application.services.profit_ratio import ProfitRatioService
+from trafriend_api.application.services.profit_ratio import (
+    CHIP_TURNOVER_METHODOLOGY,
+    FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY,
+    ProfitRatioService,
+)
 from trafriend_api.application.services.universe import UniverseService
 from trafriend_api.domain.errors import ProviderAuthenticationError
 from trafriend_api.infrastructure.calendar import NyseTradingCalendar
@@ -99,7 +103,16 @@ def build_application_services(
             )
     return ApplicationServices(
         profit_ratio=ProfitRatioService(
-            profit_repository, ProfitRatioExchangeCalendar(), price_repository=price_repository
+            profit_repository,
+            ProfitRatioExchangeCalendar(),
+            price_repository=price_repository,
+            methodology=(
+                CHIP_TURNOVER_METHODOLOGY
+                if settings.database_url is None
+                else FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY
+                if settings.profit_ratio_methodology == "FUTU_CHIPS_PROFIT_RATIO"
+                else CHIP_TURNOVER_METHODOLOGY
+            ),
         ),
         market_data=MarketDataService(
             provider=mock_provider,

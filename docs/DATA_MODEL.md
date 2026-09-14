@@ -359,7 +359,7 @@ Deployment may seed only the source-attributed normalized QQQ identity snapshot,
 never market prices or fake observations. The initializer runs outside migrations,
 only on an empty catalog, preserving the original snapshot date and all existing data.
 
-### 6.0 Implemented endpoint storage (migration `20260908_0008`)
+### 6.0 Implemented endpoint storage (migrations `20260908_0008` and `20260912_0010`)
 
 The tables below in 6.1-6.4 describe the broader future model. This first slice
 implements three narrower tables without changing `daily_close_anchors`:
@@ -368,10 +368,13 @@ implements three narrower tables without changing `daily_close_anchors`:
   source and effective date; immutable dated snapshots, latest snapshot for search.
 - `profit_ratio_capture_prices`: one immutable regular OPEN/CLOSE price per
   instrument/trading date/phase, optional previous close on the current split basis,
-  provider/feed, UTC effective/observation timestamps and USD currency.
+  provider/feed, UTC effective/observation timestamps and USD currency. Migration
+  `0010` adds methodology key/version to its logical identity so distinct provider
+  methods cannot collide or silently reuse incompatible price context.
 - `profit_ratio_observations`: immutable versioned observation linked to a price
   fact, methodology key/version, quality, reason code and nullable bounded ratio.
-  `DATA_INSUFFICIENT` requires null; `ESTIMATED` requires a ratio in [0,1].
+  `DATA_INSUFFICIENT` requires null; `ESTIMATED` and provider `REPORTED` require a
+  ratio in [0,1].
 
 Atomic writes use transaction locks and unique constraints. Database triggers reject
 UPDATE/DELETE. A missing-input observation can append a higher numerical version
@@ -382,6 +385,8 @@ cost-state checkpoints and arbitrary correction workflows remain unimplemented.
 
 The first actual historical run stores current-membership price inputs and explicit
 missing-model-input observations, **not calculated historical Profit Ratios**.
+Futu OpenD observations are forward-collected only, under
+`FUTU_CHIPS_PROFIT_RATIO/1`, and do not backfill or revise those rows.
 
 ### 6.1 `profit_ratio_methodologies`
 

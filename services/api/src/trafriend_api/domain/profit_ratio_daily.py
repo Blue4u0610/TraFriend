@@ -26,6 +26,7 @@ class ProfitRatioPhase(str, Enum):
 
 class ProfitRatioStatus(str, Enum):
     ESTIMATED = "ESTIMATED"
+    REPORTED = "REPORTED"
     DATA_INSUFFICIENT = "DATA_INSUFFICIENT"
 
 
@@ -108,7 +109,9 @@ class ProfitRatioObservation:
             raise ValueError("observations require provider and methodology provenance")
         if self.ratio is not None:
             _ratio(self.ratio)
-        if (self.status == ProfitRatioStatus.ESTIMATED) != (self.ratio is not None):
+        if (self.status in {ProfitRatioStatus.ESTIMATED, ProfitRatioStatus.REPORTED}) != (
+            self.ratio is not None
+        ):
             raise ValueError("insufficient observations cannot contain a fabricated ratio")
         if self.status == ProfitRatioStatus.DATA_INSUFFICIENT and not self.reason_code:
             raise ValueError("insufficient observations require an explicit reason")
@@ -252,11 +255,20 @@ class ProfitRatioMinute:
 class ProfitRatioCaptureInput:
     price: ProfitRatioPriceObservation
     quality: str = "DELAYED"
+    reported_ratio: Optional[Decimal] = None
+    methodology_key: str = "CHIP_TURNOVER"
+    methodology_version: str = "1"
     float_snapshot: Optional[FloatSnapshot] = None
     prior_distribution: Optional[ChipDistribution] = None
     minutes: Tuple[ProfitRatioMinute, ...] = ()
     corporate_actions_verified: bool = False
     minute_coverage_complete: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.methodology_key or not self.methodology_version:
+            raise ValueError("capture input methodology is required")
+        if self.reported_ratio is not None:
+            _ratio(self.reported_ratio)
 
 
 @dataclass(frozen=True)
@@ -272,6 +284,8 @@ def calculate_endpoint(
     """Candidate model only: never invent a float, seed, or corporate-action basis."""
 
     price = inputs.price
+    if inputs.reported_ratio is not None:
+        return ProfitRatioModelResult(inputs.reported_ratio, "")
     prior = inputs.prior_distribution
     snapshot = inputs.float_snapshot
     if price.trading_date != session.trading_date:

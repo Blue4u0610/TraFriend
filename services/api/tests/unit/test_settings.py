@@ -54,6 +54,23 @@ def test_daily_close_provider_defaults_to_mock_and_can_select_alpaca(monkeypatch
     assert Settings.from_environment().daily_close_provider == "alpaca"
 
 
+def test_futu_profit_ratio_settings_are_backend_only_and_validated(monkeypatch) -> None:
+    monkeypatch.setenv("TRAFRIEND_FUTU_OPEND_HOST", "localhost")
+    monkeypatch.setenv("TRAFRIEND_FUTU_OPEND_PORT", "22222")
+    monkeypatch.setenv("TRAFRIEND_FUTU_PROFIT_RATIO_QUALITY", "delayed")
+    monkeypatch.setenv("TRAFRIEND_PROFIT_RATIO_METHODOLOGY", "futu_chips_profit_ratio")
+
+    settings = Settings.from_environment()
+
+    assert settings.futu_opend_host == "localhost"
+    assert settings.futu_opend_port == 22222
+    assert settings.futu_profit_ratio_quality == "DELAYED"
+    assert settings.profit_ratio_methodology == "FUTU_CHIPS_PROFIT_RATIO"
+
+    with pytest.raises(ValueError, match="unsupported Profit Ratio methodology"):
+        Settings(profit_ratio_methodology="guessed-ratio")
+
+
 def test_database_url_is_secret_and_optional(monkeypatch) -> None:
     monkeypatch.setenv(
         "DATABASE_URL",

@@ -493,7 +493,10 @@ The server loads every active QQQ relationship and its current persisted anchor,
 
 ## 6. Profit Ratio endpoints
 
-These endpoints become release-blocking only after the metric definition and provider methodology are approved. They must still work against deterministic Mock data during development.
+These endpoints expose one explicitly selected stored methodology at a time and
+still work against deterministic Mock data during development. PostgreSQL may
+select `FUTU_CHIPS_PROFIT_RATIO/1`, a direct provider-reported Futu OpenD value;
+it must never combine that series with `CHIP_TURNOVER/1`.
 
 ### 6.1 Get latest Profit Ratio
 

@@ -10,10 +10,11 @@ Two ratio endpoint values can form a body but cannot supply intraday ratio high/
 A missing ratio does not hide stock search, valid price candles, or daily returns.
 An explicit Mock fixture is used only when no PostgreSQL configuration is supplied.
 
-The current Alpaca adapter can capture real consolidated regular open/close prices.
-It **cannot yet publish real Profit Ratio values**: validated prior cost states,
-effective-dated float and corporate-action/minute coverage inputs are missing.
-Successful price capture reports `DATA_INSUFFICIENT`, with null ratios. See ADR 0006.
+The Alpaca adapter captures real consolidated regular open/close prices but cannot
+publish a numerical Profit Ratio because its validated cost-state inputs are absent.
+The optional Futu OpenD adapter instead reads Futu's directly reported
+`CHIPS_PROFIT_RATIO` and stores it under a separate method key. It does not claim to
+reconstruct or explain Futu's proprietary methodology. See ADR 0006 and ADR 0008.
 The legacy single-point `/instruments/{id}/latest` and `/history` endpoints remain
 the older Mock prototype and are not used by the new chart.
 
@@ -113,6 +114,70 @@ on weekdays around the regular open, the possible early close, and the regular
 close, with an additional retry check. Its target is local `trafriend_dev` only;
 it must stop if inherited secrets are unavailable or the configured target differs.
 It does not enable numeric ratios while model prerequisites remain absent.
+
+## Futu OpenD live capture
+
+Install and run the official OpenD on the same host as this worker, log in using
+Futu's supported flow, and confirm the account's U.S. quote/data entitlement. Do not
+store a Futu password in this repository. Configure only backend worker values:
+
+```sh
+TRAFRIEND_PROFIT_RATIO_METHODOLOGY=FUTU_CHIPS_PROFIT_RATIO
+TRAFRIEND_FUTU_OPEND_HOST=127.0.0.1
+TRAFRIEND_FUTU_OPEND_PORT=11111
+TRAFRIEND_FUTU_PROFIT_RATIO_QUALITY=UNKNOWN
+```
+
+After applying migrations, the independently runnable command is:
+
+```sh
+.venv/bin/python -m trafriend_api.scripts.capture_futu_profit_ratio
+```
+
+Run it on weekdays at the same 9:50, 13:20 and 16:20 New York checks used by the
+local external runner. The command itself accepts work only 20–55 minutes after the
+calendar open or actual close, so the 13:20 check activates only on early-close
+days. `--phase OPEN|CLOSE` may assert the expected phase; `--symbols SNDK,NVDA`
+provides a bounded smoke test. Outside a due window it exits successfully with
+`NOT_DUE` and never contacts OpenD. Existing rows are idempotent and avoid provider
+calls. Missing values are `UNAVAILABLE`, not stale fallbacks.
+
+The local Codex heartbeat may launch the installed Futu OpenD application when port
+11111 is not listening, with a bounded 60-second readiness check. It cannot enter
+credentials or bypass an expired login; the Mac and Codex must be available at the
+sampling time, and login-required failures notify the operator.
+
+For unattended production writes from the Mac, use the repository-owned launchd
+configuration in `ops/macos` instead of relying on the Codex heartbeat. It retrieves
+the Render external database URL and Alpaca credentials from the logged-in user's
+macOS Keychain, rejects local or migration-stale database targets, starts OpenD when
+needed, and runs Futu capture before the potentially longer daily market update.
+The companion keep-awake agent uses `caffeinate -i`; the Mac must remain powered,
+logged in, and connected to the network. Futu reauthentication can still require
+operator action.
+
+One-time setup is deliberately interactive so secrets never enter shell history:
+
+```sh
+./ops/macos/configure_profit_ratio_keychain.zsh
+./ops/macos/install_profit_ratio_launch_agents.zsh
+```
+
+The installer refuses to load the capture agent until the production connection,
+current Alembic revision, Keychain entries, and OpenD listener all validate. Logs are
+written under `~/Library/Logs/TraFriend`. Remove both agents without deleting the
+Keychain items with `./ops/macos/uninstall_profit_ratio_launch_agents.zsh`.
+
+OpenD's current featured property does not provide documented historical snapshots,
+so no three-month ratio backfill is claimed. The independent three-month price K
+line remains available. Before public display, verify redistribution rights and set
+quality to `REALTIME` or `DELAYED` only when supported by the account entitlement.
+
+Stock Screening V2 reports this field in normalized fractional `0..1` units. The
+adapter scans at most ten 200-row U.S. pages sorted by market cap and retains only
+symbols in TraFriend's dated QQQ constituent catalog. This bounded path is used
+because the current OpenD `INDEX_ID` screen returns an empty U.S. result; missing
+catalog symbols remain unavailable rather than being fabricated.
 
 Test diagnostics must exclude database URLs from fixture representations. The
 existing PostgreSQL fixture now uses `repr=False` for its credential-bearing field.

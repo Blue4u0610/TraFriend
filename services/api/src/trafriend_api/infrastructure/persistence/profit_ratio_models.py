@@ -40,9 +40,17 @@ class ProfitRatioPriceRecord(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     provider: Mapped[str] = mapped_column(String(50))
     source_feed: Mapped[str] = mapped_column(String(50))
+    methodology_key: Mapped[str] = mapped_column(String(100), default="CHIP_TURNOVER")
+    methodology_version: Mapped[str] = mapped_column(String(20), default="1")
     currency: Mapped[str] = mapped_column(String(3))
     __table_args__ = (
-        UniqueConstraint("instrument_id", "trading_date", "phase"),
+        UniqueConstraint(
+            "instrument_id",
+            "trading_date",
+            "phase",
+            "methodology_key",
+            "methodology_version",
+        ),
         CheckConstraint("phase IN ('OPEN', 'CLOSE')"),
         CheckConstraint("price > 0 AND price < 10000000000000000"),
         CheckConstraint(
@@ -82,6 +90,6 @@ class ProfitRatioObservationRecord(Base):
         CheckConstraint("ratio IS NULL OR (ratio >= 0 AND ratio <= 1)"),
         CheckConstraint(
             "(status = 'DATA_INSUFFICIENT' AND ratio IS NULL) OR "
-            "(status = 'ESTIMATED' AND ratio IS NOT NULL)"
+            "(status IN ('ESTIMATED', 'REPORTED') AND ratio IS NOT NULL)"
         ),
     )

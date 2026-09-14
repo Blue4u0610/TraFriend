@@ -73,12 +73,31 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
             session.add_all(QqqConstituentRecord(**asdict(item)) for item in constituents)
 
     def latest(
-        self, instrument_id: str, trading_date: date, phase: ProfitRatioPhase
+        self,
+        instrument_id: str,
+        trading_date: date,
+        phase: ProfitRatioPhase,
+        methodology_key: str = "CHIP_TURNOVER",
+        methodology_version: str = "1",
     ) -> Optional[ProfitRatioRecord]:
         with Session(self._engine) as session:
-            return self._latest(session, instrument_id, trading_date, phase)
+            return self._latest(
+                session,
+                instrument_id,
+                trading_date,
+                phase,
+                methodology_key,
+                methodology_version,
+            )
 
-    def history(self, instrument_id: str, start: date, end: date) -> tuple[ProfitRatioRecord, ...]:
+    def history(
+        self,
+        instrument_id: str,
+        start: date,
+        end: date,
+        methodology_key: str = "CHIP_TURNOVER",
+        methodology_version: str = "1",
+    ) -> tuple[ProfitRatioRecord, ...]:
         with Session(self._engine) as session:
             records = session.scalars(
                 select(ProfitRatioObservationRecord)
@@ -86,8 +105,8 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
                     ProfitRatioObservationRecord.instrument_id == instrument_id,
                     ProfitRatioObservationRecord.trading_date >= start,
                     ProfitRatioObservationRecord.trading_date <= end,
-                    ProfitRatioObservationRecord.methodology_key == "CHIP_TURNOVER",
-                    ProfitRatioObservationRecord.methodology_version == "1",
+                    ProfitRatioObservationRecord.methodology_key == methodology_key,
+                    ProfitRatioObservationRecord.methodology_version == methodology_version,
                 )
                 .order_by(
                     ProfitRatioObservationRecord.trading_date,
@@ -104,14 +123,18 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
 
     def save(self, record: ProfitRatioRecord) -> ProfitRatioPersistenceResult:
         observation, price = record.observation, record.price
-        if (observation.methodology_key, observation.methodology_version) != ("CHIP_TURNOVER", "1"):
-            raise ValueError("unsupported Profit Ratio methodology")
         with Session(self._engine) as session, session.begin():
             key = (f"profit-ratio:{observation.instrument_id}:"
-                   f"{observation.trading_date}:{observation.phase.value}")
+                   f"{observation.trading_date}:{observation.phase.value}:"
+                   f"{observation.methodology_key}:{observation.methodology_version}")
             session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
             existing = self._latest(
-                session, observation.instrument_id, observation.trading_date, observation.phase
+                session,
+                observation.instrument_id,
+                observation.trading_date,
+                observation.phase,
+                observation.methodology_key,
+                observation.methodology_version,
             )
             outcome = ProfitRatioPersistenceOutcome.INSERTED
             version = 1
@@ -133,10 +156,19 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
                     ProfitRatioPriceRecord.instrument_id == price.instrument_id,
                     ProfitRatioPriceRecord.trading_date == price.trading_date,
                     ProfitRatioPriceRecord.phase == price.phase.value,
+                    ProfitRatioPriceRecord.methodology_key
+                    == observation.methodology_key,
+                    ProfitRatioPriceRecord.methodology_version
+                    == observation.methodology_version,
                 )
             )
             if price_record is None:
-                price_record = ProfitRatioPriceRecord(id=str(uuid4()), **asdict(price))
+                price_record = ProfitRatioPriceRecord(
+                    id=str(uuid4()),
+                    methodology_key=observation.methodology_key,
+                    methodology_version=observation.methodology_version,
+                    **asdict(price),
+                )
                 session.add(price_record)
                 session.flush()
             elif any(
@@ -166,7 +198,13 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
             return ProfitRatioPersistenceResult(self._domain(session, stored), outcome)
 
     def _latest(
-        self, session: Session, instrument_id: str, trading_date: date, phase: ProfitRatioPhase
+        self,
+        session: Session,
+        instrument_id: str,
+        trading_date: date,
+        phase: ProfitRatioPhase,
+        methodology_key: str,
+        methodology_version: str,
     ) -> Optional[ProfitRatioRecord]:
         record = session.scalar(
             select(ProfitRatioObservationRecord)
@@ -174,8 +212,8 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
                 ProfitRatioObservationRecord.instrument_id == instrument_id,
                 ProfitRatioObservationRecord.trading_date == trading_date,
                 ProfitRatioObservationRecord.phase == phase.value,
-                ProfitRatioObservationRecord.methodology_key == "CHIP_TURNOVER",
-                ProfitRatioObservationRecord.methodology_version == "1",
+                ProfitRatioObservationRecord.methodology_key == methodology_key,
+                ProfitRatioObservationRecord.methodology_version == methodology_version,
             )
             .order_by(ProfitRatioObservationRecord.version.desc())
             .limit(1)

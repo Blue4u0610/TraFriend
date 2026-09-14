@@ -159,11 +159,13 @@ Two endpoints are rendered as a body without fabricated intraday high/low wicks.
 Missing ratios do not hide valid price context. Reads are database-only; metadata
 search never calls a market provider. Methodology gaps and partial days are explicit.
 
-This round implements real price capture and an experimental guarded model, not a
-validated live Profit Ratio product. The Alpaca adapter has no verified historical
-float or initialized cost distribution; production-configured rows therefore carry
-null ratios and `DATA_INSUFFICIENT`, not Mock data. Numerical publication remains
-blocked on the prerequisites documented in ADR 0006. See `PROFIT_RATIO_OPERATIONS.md`.
+Alpaca supplies real price history but no validated historical float or initialized
+cost distribution, so its ratio-input rows remain null and `DATA_INSUFFICIENT`.
+ADR 0008 adds a separate official Futu OpenD adapter for Futu's provider-reported
+`CHIPS_PROFIT_RATIO`; scheduled collection samples it only at genuine open/close windows and stores it as
+`FUTU_CHIPS_PROFIT_RATIO/1`. Local OpenD read entitlement is verified for the full
+stored QQQ snapshot; the first correctly timed trading-session capture remains
+pending. The two methodologies are never merged.
 
 The price-first correction makes complete daily stock OHLC the default chart after
 selection. Price candles, daily price return, and Profit Ratio are independently

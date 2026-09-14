@@ -23,6 +23,10 @@ class Settings(BaseModel):
     alpaca_daily_bars_feed: str = "sip"
     alpaca_daily_bars_quality: DailyCloseQuality = DailyCloseQuality.DELAYED
     daily_close_provider: str = "mock"
+    profit_ratio_methodology: str = "FUTU_CHIPS_PROFIT_RATIO"
+    futu_opend_host: str = "127.0.0.1"
+    futu_opend_port: int = 11111
+    futu_profit_ratio_quality: str = "UNKNOWN"
     database_url: Optional[SecretStr] = None
 
     @field_validator("cors_origins")
@@ -66,6 +70,30 @@ class Settings(BaseModel):
             ):
                 raise ValueError("localhost CORS origins are not allowed in production")
         return self
+
+    @field_validator("profit_ratio_methodology")
+    @classmethod
+    def validate_profit_ratio_methodology(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"CHIP_TURNOVER", "FUTU_CHIPS_PROFIT_RATIO"}:
+            raise ValueError("unsupported Profit Ratio methodology")
+        return normalized
+
+    @field_validator("futu_opend_host")
+    @classmethod
+    def validate_futu_host(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Futu OpenD host cannot be empty")
+        return normalized
+
+    @field_validator("futu_profit_ratio_quality")
+    @classmethod
+    def validate_futu_quality(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"REALTIME", "DELAYED", "UNKNOWN"}:
+            raise ValueError("Futu quality must be REALTIME, DELAYED, or UNKNOWN")
+        return normalized
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -127,6 +155,14 @@ class Settings(BaseModel):
             daily_close_provider=os.getenv(
                 "TRAFRIEND_DAILY_CLOSE_PROVIDER", "mock"
             ).lower(),
+            profit_ratio_methodology=os.getenv(
+                "TRAFRIEND_PROFIT_RATIO_METHODOLOGY", "FUTU_CHIPS_PROFIT_RATIO"
+            ),
+            futu_opend_host=os.getenv("TRAFRIEND_FUTU_OPEND_HOST", "127.0.0.1"),
+            futu_opend_port=int(os.getenv("TRAFRIEND_FUTU_OPEND_PORT", "11111")),
+            futu_profit_ratio_quality=os.getenv(
+                "TRAFRIEND_FUTU_PROFIT_RATIO_QUALITY", "UNKNOWN"
+            ),
             database_url=(
                 SecretStr(os.environ["DATABASE_URL"])
                 if os.getenv("DATABASE_URL")

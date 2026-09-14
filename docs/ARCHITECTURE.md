@@ -361,6 +361,22 @@ session OHLC maintenance; `capture_profit_ratio` remains the separately runnable
 OPEN/CLOSE ratio-input diagnostic and also safely maintains OHLC when invoked. No
 worker invents a Profit Ratio when validated model inputs are absent.
 
+ADR 0008 adds `FutuOpenDProfitRatioProvider` as a second implementation of the
+existing capture port. It reads Futu Stock Screening V2
+`CHIPS_PROFIT_RATIO` through a bounded, market-cap-sorted U.S. screen plus one batch
+market snapshot through an official local OpenD. QQQ membership comes from the dated
+TraFriend catalog, not from screen results. The adapter preserves the SDK's reported
+fractional Decimal and labels it
+`FUTU_CHIPS_PROFIT_RATIO/1`; it does not reverse engineer Futu's methodology.
+`capture_futu_profit_ratio` is a finite external-worker command with bounded
+calendar-derived open/close windows. PostgreSQL price-context identities include
+methodology so the Futu series can coexist with older `CHIP_TURNOVER/1` rows.
+FastAPI wires only the selected persisted methodology and never contacts OpenD.
+For the first unattended deployment, a user-level macOS launchd job invokes this
+command and the existing daily market update using secrets read from macOS Keychain.
+It remains outside FastAPI, rejects non-production database targets, and has no
+permanent polling loop in application code.
+
 `bootstrap_production` seeds QQQ identity metadata only when empty, from the
 source-attributed 2026-09-04 bundled snapshot, and verifies nonzero searchable
 coverage. It never writes price fixtures or overwrites a newer snapshot. Metadata
