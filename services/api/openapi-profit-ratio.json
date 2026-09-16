@@ -383,6 +383,129 @@
             "title": "Price Status",
             "type": "string"
           },
+          "profit_ratio": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio"
+          },
+          "profit_ratio_market_timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Market Timestamp"
+          },
+          "profit_ratio_methodology_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Methodology Key"
+          },
+          "profit_ratio_methodology_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Methodology Version"
+          },
+          "profit_ratio_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Observed At"
+          },
+          "profit_ratio_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Provider"
+          },
+          "profit_ratio_quality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Quality"
+          },
+          "profit_ratio_reason_code": {
+            "default": "NOT_CAPTURED",
+            "title": "Profit Ratio Reason Code",
+            "type": "string"
+          },
+          "profit_ratio_source_feed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Source Feed"
+          },
+          "profit_ratio_source_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Source Note"
+          },
+          "profit_ratio_status": {
+            "default": "NOT_CAPTURED",
+            "title": "Profit Ratio Status",
+            "type": "string"
+          },
+          "profit_ratio_time_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Ratio Time Basis"
+          },
           "quality": {
             "title": "Quality",
             "type": "string"

@@ -150,22 +150,26 @@ Profit Ratio is not a universally standardized metric. Before a real provider is
 
 Profit Ratio OHLC/candlestick data is a post-MVP option. It may enter the MVP only if the chosen provider supplies sufficiently frequent observations or the system deliberately samples them. OHLC must never be fabricated from one daily point.
 
-### 6.4.1 QQQ open/close chart (2026-09-08)
+### 6.4.1 QQQ daily Profit Ratio chart (2026-09-15)
 
 The first daily chart now searches only the equity holdings of a sourced current
-QQQ snapshot (not the Popular dollar-volume ranking). It shows daily OPEN/CLOSE
-Profit Ratio endpoints and stock close-to-close return, with an accessible table.
-Two endpoints are rendered as a body without fabricated intraday high/low wicks.
+QQQ snapshot (not the Popular dollar-volume ranking). It shows one provider-reported
+Profit Ratio value per trading day and stock close-to-close return, with an accessible
+table. A genuine close-window observation is preferred. An explicitly imported
+historical daily value whose effective time cannot be verified is labeled
+`DAILY_TIME_UNVERIFIED`, never presented as a close value.
 Missing ratios do not hide valid price context. Reads are database-only; metadata
 search never calls a market provider. Methodology gaps and partial days are explicit.
 
 Alpaca supplies real price history but no validated historical float or initialized
 cost distribution, so its ratio-input rows remain null and `DATA_INSUFFICIENT`.
 ADR 0008 adds a separate official Futu OpenD adapter for Futu's provider-reported
-`CHIPS_PROFIT_RATIO`; scheduled collection samples it only at genuine open/close windows and stores it as
-`FUTU_CHIPS_PROFIT_RATIO/1`. Local OpenD read entitlement is verified for the full
-stored QQQ snapshot; the first correctly timed trading-session capture remains
-pending. The two methodologies are never merged.
+`CHIPS_PROFIT_RATIO`; scheduled collection now samples it only in the genuine close
+window and stores it as `FUTU_CHIPS_PROFIT_RATIO/1`. A separately audited SNDK
+date/value import supplies 30 provider-reported daily observations from 2026-08-04
+through 2026-09-15. The source does not disclose their effective intraday time, so
+they remain visibly time-unverified. Methodologies and timing bases are never merged
+or silently upgraded.
 
 The price-first correction makes complete daily stock OHLC the default chart after
 selection. Price candles, daily price return, and Profit Ratio are independently
@@ -181,6 +185,7 @@ dated 2026-09-04 normalized issuer snapshot, without vendor calls or price/model
 prerequisites. It preserves existing snapshots. Explicit issuer refresh remains
 necessary to track membership changes. Historical OHLC is a separate idempotent
 worker capture; build migrations and public search never fetch market prices.
+The daily table is month-bounded in the UI so longer histories remain navigable.
 
 ### 6.4a Search, popular universe, and watchlist
 

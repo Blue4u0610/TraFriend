@@ -22,6 +22,7 @@ from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioCaptureInput,
     ProfitRatioConflictError,
+    ProfitRatioDailyObservation,
     ProfitRatioMinute,
     ProfitRatioObservation,
     ProfitRatioPhase,
@@ -29,6 +30,7 @@ from trafriend_api.domain.profit_ratio_daily import (
     ProfitRatioRecord,
     ProfitRatioSession,
     ProfitRatioStatus,
+    ProfitRatioTimeBasis,
     calculate_endpoint,
 )
 from trafriend_api.infrastructure.market_data.mock.profit_ratio import (
@@ -537,6 +539,8 @@ def test_chart_returns_true_open_close_endpoints_and_close_to_close_price_return
     assert row.price_change_return == Decimal("0.1")
     assert row.ratio_change == Decimal("0.2")
     assert row.status == "COMPLETE" and result.gaps == ()
+    assert row.profit_ratio == Decimal("0.6")
+    assert row.profit_ratio_time_basis == "CLOSE"
     assert not hasattr(row, "high") and not hasattr(row, "low")
 
 
@@ -567,9 +571,49 @@ def test_mixed_provenance_is_not_combined_into_ratio_change() -> None:
         )
     )
     history = service(Provider(), repository).daily("SNDK", DAY, DAY)
-    assert history.status == "PARTIAL"
+    assert history.status == "COMPLETE"
     assert history.rows[0].ratio_change is None
-    assert history.rows[0].status == "PROVENANCE_MISMATCH"
+    assert history.rows[0].profit_ratio == Decimal("0.6")
+    assert history.rows[0].profit_ratio_time_basis == "CLOSE"
+
+
+def test_daily_time_unverified_value_is_exposed_as_one_ratio_without_claiming_close() -> None:
+    repository = InMemoryProfitRatioRepository((MEMBER,))
+    repository.save_daily(
+        ProfitRatioDailyObservation(
+            id="daily-sndk",
+            instrument_id=MEMBER.instrument_id,
+            symbol=MEMBER.symbol,
+            trading_date=DAY,
+            ratio=Decimal("0.3205"),
+            time_basis=ProfitRatioTimeBasis.DAILY_TIME_UNVERIFIED,
+            market_timestamp=None,
+            observed_at=NOW,
+            provider="futu",
+            source_feed="desktop-chip-distribution-history",
+            quality="TIME_UNVERIFIED",
+            status=ProfitRatioStatus.REPORTED,
+            reason_code="HISTORICAL_UI_REPORTED",
+            methodology_key=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+            methodology_version=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+            source_note="Daily value displayed by Futu desktop; time is not disclosed",
+        )
+    )
+    history = ProfitRatioService(
+        repository,
+        Calendar(),
+        Provider(),
+        now=lambda: NOW,
+        methodology=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY,
+    ).daily("SNDK", DAY, DAY)
+    row = history.rows[0]
+    assert row.profit_ratio == Decimal("0.3205")
+    assert row.profit_ratio_time_basis == "DAILY_TIME_UNVERIFIED"
+    assert row.profit_ratio_market_timestamp is None
+    assert row.profit_ratio_quality == "TIME_UNVERIFIED"
+    assert row.close_ratio is None
+    assert history.gaps == ()
+    assert history.status == "COMPLETE"
 
 
 def test_unsupported_symbol_and_range_validation_never_call_provider() -> None:

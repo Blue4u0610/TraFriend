@@ -37,6 +37,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--start", type=date.fromisoformat)
     parser.add_argument("--end", type=date.fromisoformat)
     parser.add_argument("--refresh-universe", action="store_true")
+    parser.add_argument(
+        "--symbols", help="comma-separated QQQ symbols for a bounded historical backfill"
+    )
     arguments = parser.parse_args(argv)
     today = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York")).date()
     end = arguments.end or today
@@ -68,6 +71,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             catalog.save_constituents(fetch_qqq_constituents(instrument_ids=ids))
         constituents = ensure_qqq_constituents(engine)
+        selected_symbols = None
+        if arguments.symbols:
+            requested = tuple(
+                dict.fromkeys(
+                    symbol.strip().upper()
+                    for symbol in arguments.symbols.split(",")
+                    if symbol.strip()
+                )
+            )
+            if not requested or len(requested) > 25:
+                raise ValueError("--symbols requires 1-25 comma-separated symbols")
+            by_symbol = {item.symbol: item for item in constituents}
+            if any(symbol not in by_symbol for symbol in requested):
+                raise ValueError("--symbols must belong to the stored QQQ snapshot")
+            constituents = tuple(by_symbol[symbol] for symbol in requested)
+            selected_symbols = requested
         provider = AlpacaProfitRatioCaptureProvider(
             key_id=settings.alpaca_key_id.get_secret_value(),
             secret_key=settings.alpaca_secret_key.get_secret_value(),
@@ -79,7 +98,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             repository=PostgreSQLDailyPriceRepository(engine),
             provider=provider,
             calendar=ProfitRatioExchangeCalendar(),
-        ).capture(start, end)
+        ).capture(start, end, selected_symbols)
         summary = asdict(report)
         summary["results"] = [
             asdict(item) for item in report.results if item.outcome not in {"INSERTED", "EXISTING"}

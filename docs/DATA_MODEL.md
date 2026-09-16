@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document defines TraFriend's logical persistence model. PostgreSQL persistence is implemented for immutable Daily Close Anchors, the curated leveraged-product universe, separately sourced market rankings, and QQQ membership/Profit Ratio endpoint price and observation records. Numerical Profit Ratio prerequisites and overnight-diagnostic tables remain design targets.
+This document defines TraFriend's logical persistence model. PostgreSQL persistence is implemented for immutable Daily Close Anchors, the curated leveraged-product universe, separately sourced market rankings, QQQ membership/Profit Ratio endpoint records, single daily provider-reported Profit Ratio observations, and independent market daily price bars. Numerical reconstructed Profit Ratio prerequisites and overnight-diagnostic tables remain design targets.
 
 The model prioritizes:
 
@@ -359,7 +359,7 @@ Deployment may seed only the source-attributed normalized QQQ identity snapshot,
 never market prices or fake observations. The initializer runs outside migrations,
 only on an empty catalog, preserving the original snapshot date and all existing data.
 
-### 6.0 Implemented endpoint storage (migrations `20260908_0008` and `20260912_0010`)
+### 6.0 Implemented endpoint and daily storage (through migration `20260915_0011`)
 
 The tables below in 6.1-6.4 describe the broader future model. This first slice
 implements three narrower tables without changing `daily_close_anchors`:
@@ -383,10 +383,25 @@ Numeric preserves Decimal results without silently rounding between memory and D
 No fictitious ratio high/low columns exist. Methodology catalogue, historical float,
 cost-state checkpoints and arbitrary correction workflows remain unimplemented.
 
-The first actual historical run stores current-membership price inputs and explicit
+The first actual historical endpoint run stores current-membership price inputs and explicit
 missing-model-input observations, **not calculated historical Profit Ratios**.
-Futu OpenD observations are forward-collected only, under
-`FUTU_CHIPS_PROFIT_RATIO/1`, and do not backfill or revise those rows.
+Futu OpenD close-window observations are forward-collected under
+`FUTU_CHIPS_PROFIT_RATIO/1` and do not backfill or revise those rows.
+
+Migration `20260915_0011` adds `profit_ratio_daily_observations` for one immutable
+provider-reported value per instrument, methodology and trading date. It is separate
+from endpoint price context because a reviewed historical date/value source may not
+disclose a reliable intraday effective time. `time_basis` is `CLOSE` only when the
+capture window proves it, or `DAILY_TIME_UNVERIFIED` otherwise. Time-unverified rows
+must have no market timestamp and retain a bounded source note. Their `observed_at`
+is the import receipt instant, not a claimed market measurement instant. Unique
+logical identity, advisory locking, immutable triggers and conflict detection make
+re-import idempotent without overwriting facts.
+
+The initial audited import contains 30 SNDK provider-reported daily values for
+2026-08-04 through 2026-09-15. It does not infer missing sessions, interpolate values,
+or claim they are close observations. Independent SNDK OHLC for the same dates comes
+from Alpaca and remains in `market_daily_price_bars`.
 
 ### 6.1 `profit_ratio_methodologies`
 

@@ -6,10 +6,10 @@ import { useLocale } from "@/i18n/locale-provider";
 import type { ProfitRatioDailyRow } from "@/lib/api/generated/profit-ratio";
 
 import { formatRatioPrice, formatRatioValue } from "./display";
-import { hasRatioProvenanceMismatch } from "./daily-ratio-chart";
 
 type CandleRow = ProfitRatioDailyRow & { open_price: string; high_price: string; low_price: string; close_price: string };
 type ReturnRow = ProfitRatioDailyRow & { price_change_return: string };
+type RatioRow = ProfitRatioDailyRow & { profit_ratio: string };
 export type DailyChartLayers = { price: boolean; returns: boolean; ratio: boolean };
 
 export function hasDailyPriceCandle(row: ProfitRatioDailyRow): row is CandleRow {
@@ -21,8 +21,8 @@ function hasDailyReturn(row: ProfitRatioDailyRow): row is ReturnRow {
   return row.price_change_return !== null && row.price_status !== "STALE" && row.price_quality !== "STALE";
 }
 
-function hasProfitRatio(row: ProfitRatioDailyRow) {
-  return !hasRatioProvenanceMismatch(row) && (row.open_ratio !== null || row.close_ratio !== null);
+function hasProfitRatio(row: ProfitRatioDailyRow): row is RatioRow {
+  return row.profit_ratio !== null && row.profit_ratio !== undefined;
 }
 
 /** One synchronized time plot with independent USD, return and ratio scales. */
@@ -33,9 +33,6 @@ export function CombinedDailyChart({ rows, layers }: { rows: ProfitRatioDailyRow
   const candles = layers.price ? rows.filter(hasDailyPriceCandle) : [];
   const returns = layers.returns ? rows.filter(hasDailyReturn) : [];
   const ratios = layers.ratio ? rows.filter(hasProfitRatio) : [];
-  const mismatchedDates = layers.ratio
-    ? rows.filter(hasRatioProvenanceMismatch).map((row) => row.trading_date)
-    : [];
   const hasPlot = candles.length > 0 || returns.length > 0 || ratios.length > 0;
   const selectedRows = rows.filter((row) =>
     (layers.price && hasDailyPriceCandle(row))
@@ -69,13 +66,12 @@ export function CombinedDailyChart({ rows, layers }: { rows: ProfitRatioDailyRow
       ? `${t.dailyReturn}: ${formatRatioValue(row.price_change_return, true)}`
       : null,
     layers.ratio && hasProfitRatio(row)
-      ? `${t.openRatio}: ${formatRatioValue(row.open_ratio)} · ${t.closeRatio}: ${formatRatioValue(row.close_ratio)}`
+      ? `${t.dailyProfitRatio}: ${formatRatioValue(row.profit_ratio)} · ${row.profit_ratio_time_basis === "CLOSE" ? t.closeTimeBasis : t.unverifiedDailyTimeBasis}`
       : null,
   ].filter(Boolean).join(" · ");
 
   return <div>
     <p id={descriptionId} className="mb-4 text-sm leading-6 text-muted-foreground">{t.combinedChartExplanation}</p>
-    {mismatchedDates.length > 0 && <p role="status" className="mb-4 rounded-lg border border-amber-400/20 p-3 text-sm leading-6 text-amber-200">{t.provenanceMismatchNotice} {mismatchedDates.join(", ")}</p>}
     {hasPlot ? <div className="overflow-x-auto rounded-xl border border-white/[0.07] bg-background/40 p-2 sm:p-4">
       <svg viewBox="0 0 820 318" className="h-auto min-w-[600px] w-full" role="img" aria-label={t.combinedChartAria} aria-describedby={descriptionId}>
         {layers.price && candles.length > 0 && [priceMaximum.toString(), priceMinimum.toString()].map((value) => <g key={`price-${value}`} aria-hidden="true">
@@ -113,16 +109,14 @@ export function CombinedDailyChart({ rows, layers }: { rows: ProfitRatioDailyRow
 
         {layers.ratio && rows.slice(1).map((row, offset) => {
           const previous = rows[offset];
-          if (!hasProfitRatio(previous) || !hasProfitRatio(row) || previous.close_ratio === null || row.close_ratio === null) return null;
-          return <line key={`ratio-line-${row.trading_date}`} data-ratio-line="true" x1={x(offset)} y1={ratioY(previous.close_ratio)} x2={x(offset + 1)} y2={ratioY(row.close_ratio)} stroke="#fbbf24" strokeWidth={2} strokeOpacity={0.9} />;
+          if (!hasProfitRatio(previous) || !hasProfitRatio(row)) return null;
+          return <line key={`ratio-line-${row.trading_date}`} data-ratio-line="true" x1={x(offset)} y1={ratioY(previous.profit_ratio)} x2={x(offset + 1)} y2={ratioY(row.profit_ratio)} stroke="#fbbf24" strokeWidth={2} strokeOpacity={0.9} />;
         })}
         {layers.ratio && rows.map((row, index) => {
           if (!hasProfitRatio(row)) return null;
           const center = x(index);
           return <g key={`ratio-${row.trading_date}`}>
-            {row.open_ratio !== null && row.close_ratio !== null && <line data-ratio-body="true" x1={center} x2={center} y1={ratioY(row.open_ratio)} y2={ratioY(row.close_ratio)} stroke="#fbbf24" strokeWidth={3} strokeOpacity={0.55} />}
-            {row.open_ratio !== null && <circle data-ratio-open="true" data-ratio-point={row.close_ratio === null ? "true" : undefined} cx={center} cy={ratioY(row.open_ratio)} r={3} fill="var(--background)" stroke="#fbbf24" strokeWidth={1.5} />}
-            {row.close_ratio !== null && <circle data-ratio-close="true" data-ratio-point={row.open_ratio === null ? "true" : undefined} cx={center} cy={ratioY(row.close_ratio)} r={3.2} fill="#fbbf24" />}
+            <circle data-ratio-point="true" cx={center} cy={ratioY(row.profit_ratio)} r={3.2} fill="#fbbf24" />
           </g>;
         })}
 

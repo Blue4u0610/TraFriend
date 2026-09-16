@@ -16,15 +16,18 @@ from trafriend_api.application.ports.profit_ratio import (
 from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioConflictError,
+    ProfitRatioDailyObservation,
     ProfitRatioObservation,
     ProfitRatioPhase,
     ProfitRatioPriceObservation,
     ProfitRatioRecord,
     ProfitRatioStatus,
     price_observations_equal,
+    profit_ratio_daily_observations_equal,
     profit_ratio_records_equal,
 )
 from trafriend_api.infrastructure.persistence.profit_ratio_models import (
+    ProfitRatioDailyObservationRecord,
     ProfitRatioObservationRecord,
     ProfitRatioPriceRecord,
     QqqConstituentRecord,
@@ -197,6 +200,94 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
             session.flush()
             return ProfitRatioPersistenceResult(self._domain(session, stored), outcome)
 
+    def daily_history(
+        self,
+        instrument_id: str,
+        start: date,
+        end: date,
+        methodology_key: str,
+        methodology_version: str,
+    ) -> tuple[ProfitRatioDailyObservation, ...]:
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(ProfitRatioDailyObservationRecord)
+                .where(
+                    ProfitRatioDailyObservationRecord.instrument_id == instrument_id,
+                    ProfitRatioDailyObservationRecord.trading_date >= start,
+                    ProfitRatioDailyObservationRecord.trading_date <= end,
+                    ProfitRatioDailyObservationRecord.methodology_key == methodology_key,
+                    ProfitRatioDailyObservationRecord.methodology_version
+                    == methodology_version,
+                )
+                .order_by(
+                    ProfitRatioDailyObservationRecord.trading_date,
+                    ProfitRatioDailyObservationRecord.time_basis,
+                    ProfitRatioDailyObservationRecord.version.desc(),
+                )
+            )
+            latest: dict[tuple[date, str], ProfitRatioDailyObservation] = {}
+            for record in records:
+                key = (record.trading_date, record.time_basis)
+                if key not in latest:
+                    latest[key] = self._daily_domain(record)
+            return tuple(latest.values())
+
+    def save_daily(
+        self, observation: ProfitRatioDailyObservation
+    ) -> ProfitRatioPersistenceOutcome:
+        with Session(self._engine) as session, session.begin():
+            key = (
+                f"profit-ratio-daily:{observation.instrument_id}:"
+                f"{observation.trading_date}:{observation.time_basis.value}:"
+                f"{observation.methodology_key}:{observation.methodology_version}"
+            )
+            session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
+            record = session.scalar(
+                select(ProfitRatioDailyObservationRecord)
+                .where(
+                    ProfitRatioDailyObservationRecord.instrument_id
+                    == observation.instrument_id,
+                    ProfitRatioDailyObservationRecord.trading_date
+                    == observation.trading_date,
+                    ProfitRatioDailyObservationRecord.time_basis
+                    == observation.time_basis.value,
+                    ProfitRatioDailyObservationRecord.methodology_key
+                    == observation.methodology_key,
+                    ProfitRatioDailyObservationRecord.methodology_version
+                    == observation.methodology_version,
+                )
+                .order_by(ProfitRatioDailyObservationRecord.version.desc())
+                .limit(1)
+            )
+            if record is not None:
+                stored = self._daily_domain(record)
+                if profit_ratio_daily_observations_equal(stored, observation):
+                    return ProfitRatioPersistenceOutcome.EXISTING
+                raise ProfitRatioConflictError("immutable daily Profit Ratio conflicts")
+            session.add(
+                ProfitRatioDailyObservationRecord(
+                    id=str(uuid4()),
+                    instrument_id=observation.instrument_id,
+                    symbol=observation.symbol,
+                    trading_date=observation.trading_date,
+                    ratio=observation.ratio,
+                    time_basis=observation.time_basis.value,
+                    market_timestamp=observation.market_timestamp,
+                    observed_at=observation.observed_at,
+                    provider=observation.provider,
+                    source_feed=observation.source_feed,
+                    quality=observation.quality,
+                    status=observation.status.value,
+                    reason_code=observation.reason_code,
+                    methodology_key=observation.methodology_key,
+                    methodology_version=observation.methodology_version,
+                    source_note=observation.source_note,
+                    version=observation.version,
+                )
+            )
+            session.flush()
+            return ProfitRatioPersistenceOutcome.INSERTED
+
     def _latest(
         self,
         session: Session,
@@ -219,6 +310,34 @@ class PostgreSQLProfitRatioRepository(ProfitRatioRepository):
             .limit(1)
         )
         return self._domain(session, record) if record else None
+
+    @staticmethod
+    def _daily_domain(
+        row: ProfitRatioDailyObservationRecord,
+    ) -> ProfitRatioDailyObservation:
+        from trafriend_api.domain.profit_ratio_daily import ProfitRatioTimeBasis
+
+        return ProfitRatioDailyObservation(
+            id=row.id,
+            instrument_id=row.instrument_id,
+            symbol=row.symbol,
+            trading_date=row.trading_date,
+            ratio=row.ratio,
+            time_basis=ProfitRatioTimeBasis(row.time_basis),
+            market_timestamp=row.market_timestamp.astimezone(timezone.utc)
+            if row.market_timestamp is not None
+            else None,
+            observed_at=row.observed_at.astimezone(timezone.utc),
+            provider=row.provider,
+            source_feed=row.source_feed,
+            quality=row.quality,
+            status=ProfitRatioStatus(row.status),
+            reason_code=row.reason_code,
+            methodology_key=row.methodology_key,
+            methodology_version=row.methodology_version,
+            source_note=row.source_note,
+            version=row.version,
+        )
 
     @staticmethod
     def _domain(session: Session, row: ProfitRatioObservationRecord) -> ProfitRatioRecord:

@@ -290,7 +290,7 @@ def test_futu_ratio_validation_rejects_out_of_range_and_nonfinite_values() -> No
 
 
 def test_due_phase_uses_exchange_instants_and_bounded_windows() -> None:
-    assert _due_phase(NOW, SESSION.opened_at, SESSION.closed_at) == ProfitRatioPhase.OPEN
+    assert _due_phase(NOW, SESSION.opened_at, SESSION.closed_at) is None
     assert _due_phase(
         SESSION.closed_at + timedelta(minutes=20), SESSION.opened_at, SESSION.closed_at
     ) == ProfitRatioPhase.CLOSE
@@ -332,8 +332,11 @@ def test_futu_worker_holiday_is_not_due_and_opend_is_not_called(
 def test_futu_worker_uses_fresh_clock_after_provider_capture(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    provider_observed_at = NOW + timedelta(seconds=1)
-    clock_values = iter((NOW, NOW, provider_observed_at + timedelta(seconds=1)))
+    close_window = SESSION.closed_at + timedelta(minutes=21)
+    provider_observed_at = close_window + timedelta(seconds=1)
+    clock_values = iter(
+        (close_window, close_window, provider_observed_at + timedelta(seconds=1))
+    )
 
     class Clock:
         @staticmethod
@@ -365,7 +368,7 @@ def test_futu_worker_uses_fresh_clock_after_provider_capture(
                         phase=phase,
                         price=Decimal("100.25"),
                         previous_close=Decimal("100"),
-                        market_timestamp=session.opened_at,
+                        market_timestamp=session.closed_at,
                         observed_at=provider_observed_at,
                         provider="futu",
                         source_feed="stock-screen-v2+market-snapshot",

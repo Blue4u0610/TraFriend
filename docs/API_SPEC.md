@@ -620,7 +620,7 @@ GET /api/v1/profit-ratio/instruments/{instrument_id}/bars
 
 It is not part of the initial contract. It may be specified only after source sampling frequency, bar boundaries, partial-bar behavior, and methodology are approved.
 
-### 6.4 QQQ equity search and daily OPEN/CLOSE observations
+### 6.4 QQQ equity search and daily observations
 
 ```http
 GET /api/v1/profit-ratio/universe/search?q=AAPL&limit=25
@@ -638,9 +638,13 @@ coverage. Out-of-coverage dates return HTTP 422 with
 Response `data` includes
 `symbol`, `instrument_id`, `methodology`, `provider`, `timezone`, `as_of`, `status`,
 `rows`, and typed `gaps` (`trading_date`, `phase`, `reason_code`). Each row includes
-date, nullable decimal-string `open_ratio`, `close_ratio`, `open_price`, `close_price`,
-`price_change_return`, `ratio_change`; phase-specific market/observation UTC times;
-quality, status and per-phase reason codes. No high/low values are implied.
+date, nullable decimal-string `profit_ratio`, `open_price`, `close_price`,
+`price_change_return`; Profit Ratio market/observation UTC times, `time_basis`,
+quality, status, reason code, provider/feed, methodology and source note. The selected
+daily value prefers a valid close-window observation and otherwise may use a stored
+`DAILY_TIME_UNVERIFIED` value. Clients must disclose the latter and must not label it
+as a close value. Legacy `open_ratio`/`close_ratio` phase fields remain additive
+compatibility fields but are not the daily page's display model.
 
 Additive price-first fields are `high_price`, `low_price`, `price_status`,
 `price_provider`, `price_source_feed`, `price_market_timestamp`, `price_observed_at`,
@@ -655,7 +659,7 @@ prior session's close transformed onto this day's split basis, not total return.
 Top-level `DATA_INSUFFICIENT` can describe ratio coverage while price data is complete;
 clients must use per-series availability rather than suppressing the whole view.
 
-Ratios/returns are fractions; ratio changes display as percentage-point changes.
+Ratios/returns are fractions. A missing daily Profit Ratio is an explicit gap.
 Missing previous price makes return null. Missing ratio inputs preserve real prices
 but return `DATA_INSUFFICIENT`. Before a phase is due, its gap is `NOT_DUE`. No zero
 substitution, interpolation, session fallback or incompatible-provenance body is

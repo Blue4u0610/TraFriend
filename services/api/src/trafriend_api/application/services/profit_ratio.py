@@ -19,12 +19,14 @@ from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioCaptureInput,
     ProfitRatioConflictError,
+    ProfitRatioDailyObservation,
     ProfitRatioObservation,
     ProfitRatioPhase,
     ProfitRatioPriceObservation,
     ProfitRatioRecord,
     ProfitRatioSession,
     ProfitRatioStatus,
+    ProfitRatioTimeBasis,
     calculate_endpoint,
 )
 
@@ -69,6 +71,18 @@ class ProfitRatioDailyRow:
     price_quality: Optional[str] = None
     price_adjustment: Optional[str] = None
     price_scope: Optional[str] = None
+    profit_ratio: Optional[Decimal] = None
+    profit_ratio_observed_at: Optional[datetime] = None
+    profit_ratio_market_timestamp: Optional[datetime] = None
+    profit_ratio_time_basis: Optional[str] = None
+    profit_ratio_quality: Optional[str] = None
+    profit_ratio_status: str = "NOT_CAPTURED"
+    profit_ratio_reason_code: str = "NOT_CAPTURED"
+    profit_ratio_provider: Optional[str] = None
+    profit_ratio_source_feed: Optional[str] = None
+    profit_ratio_methodology_key: Optional[str] = None
+    profit_ratio_methodology_version: Optional[str] = None
+    profit_ratio_source_note: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +181,13 @@ class ProfitRatioService:
             self._methodology.id,
             self._methodology.version,
         )
+        daily_observations = self._repository.daily_history(
+            constituent.instrument_id,
+            start,
+            end,
+            self._methodology.id,
+            self._methodology.version,
+        )
         price_bars = (
             self._price_repository.history(constituent.instrument_id, start, end)
             if self._price_repository is not None
@@ -183,6 +204,11 @@ class ProfitRatioService:
             if item.observation.methodology_key == self._methodology.id
             and item.observation.methodology_version == self._methodology.version
         }
+        daily_by_date: dict[date, ProfitRatioDailyObservation] = {}
+        for observation in daily_observations:
+            current = daily_by_date.get(observation.trading_date)
+            if current is None or observation.time_basis == ProfitRatioTimeBasis.CLOSE:
+                daily_by_date[observation.trading_date] = observation
         rows: list[ProfitRatioDailyRow] = []
         gaps: list[ProfitRatioGap] = []
         for session in self._calendar.sessions(start, end):
@@ -191,6 +217,14 @@ class ProfitRatioService:
             opening = by_phase.get((session.trading_date, ProfitRatioPhase.OPEN))
             closing = by_phase.get((session.trading_date, ProfitRatioPhase.CLOSE))
             row = self._row(session, opening, closing, now, self._publication_delay)
+            row = self._with_single_daily_ratio(
+                row,
+                session,
+                closing,
+                daily_by_date.get(session.trading_date),
+                now,
+                self._publication_delay,
+            )
             bar = by_price_date.get(session.trading_date)
             if bar is not None:
                 row = replace(
@@ -210,33 +244,26 @@ class ProfitRatioService:
                     price_scope=bar.price_scope,
                 )
             rows.append(row)
-            if row.status == "PROVENANCE_MISMATCH":
+            if row.profit_ratio is None:
                 gaps.append(
                     ProfitRatioGap(
-                        session.trading_date, ProfitRatioPhase.CLOSE, "PROVENANCE_MISMATCH"
+                        session.trading_date,
+                        ProfitRatioPhase.CLOSE,
+                        row.profit_ratio_reason_code,
                     )
                 )
-            for phase, record in (
-                (ProfitRatioPhase.OPEN, opening),
-                (ProfitRatioPhase.CLOSE, closing),
-            ):
-                if record is None or record.observation.ratio is None:
-                    reason = (
-                        record.observation.reason_code
-                        if record is not None
-                        else "NOT_DUE"
-                        if session.instant(phase) + self._publication_delay > now
-                        else "NOT_CAPTURED"
-                    )
-                    gaps.append(ProfitRatioGap(session.trading_date, phase, reason))
-        providers = {item.observation.provider for item in records} | {
+        providers = {
+            row.profit_ratio_provider
+            for row in rows
+            if row.profit_ratio_provider is not None
+        } | {
             bar.provider for bar in by_price_date.values()
         }
         has_prices = any(row.open_price is not None or row.close_price is not None for row in rows)
-        has_ratios = any(row.open_ratio is not None or row.close_ratio is not None for row in rows)
+        has_ratios = any(row.profit_ratio is not None for row in rows)
         status = (
             "EMPTY"
-            if not has_prices
+            if not has_prices and not has_ratios
             else "DATA_INSUFFICIENT"
             if not has_ratios
             else "PARTIAL"
@@ -548,4 +575,74 @@ class ProfitRatioService:
             else None,
             price_adjustment="raw" if latest_price_context else None,
             price_scope="ENDPOINT_CONTEXT_ONLY" if latest_price_context else None,
+        )
+
+    @staticmethod
+    def _with_single_daily_ratio(
+        row: ProfitRatioDailyRow,
+        session: ProfitRatioSession,
+        closing: Optional[ProfitRatioRecord],
+        daily: Optional[ProfitRatioDailyObservation],
+        now: datetime,
+        publication_delay: timedelta,
+    ) -> ProfitRatioDailyRow:
+        if closing is not None and closing.observation.ratio is not None:
+            observation = closing.observation
+            return replace(
+                row,
+                profit_ratio=observation.ratio,
+                profit_ratio_observed_at=observation.observed_at,
+                profit_ratio_market_timestamp=observation.market_timestamp,
+                profit_ratio_time_basis=ProfitRatioTimeBasis.CLOSE.value,
+                profit_ratio_quality=observation.quality,
+                profit_ratio_status="COMPLETE",
+                profit_ratio_reason_code=observation.reason_code,
+                profit_ratio_provider=observation.provider,
+                profit_ratio_source_feed=observation.source_feed,
+                profit_ratio_methodology_key=observation.methodology_key,
+                profit_ratio_methodology_version=observation.methodology_version,
+                profit_ratio_source_note="Verified close-window provider observation",
+                quality=observation.quality,
+                status="COMPLETE",
+            )
+        if daily is not None:
+            return replace(
+                row,
+                profit_ratio=daily.ratio,
+                profit_ratio_observed_at=daily.observed_at,
+                profit_ratio_market_timestamp=daily.market_timestamp,
+                profit_ratio_time_basis=daily.time_basis.value,
+                profit_ratio_quality=daily.quality,
+                profit_ratio_status="COMPLETE",
+                profit_ratio_reason_code=daily.reason_code,
+                profit_ratio_provider=daily.provider,
+                profit_ratio_source_feed=daily.source_feed,
+                profit_ratio_methodology_key=daily.methodology_key,
+                profit_ratio_methodology_version=daily.methodology_version,
+                profit_ratio_source_note=daily.source_note,
+                quality=daily.quality,
+                status="COMPLETE",
+            )
+        reason = (
+            closing.observation.reason_code
+            if closing is not None
+            else "NOT_DUE"
+            if session.closed_at + publication_delay > now
+            else "NOT_CAPTURED"
+        )
+        return replace(
+            row,
+            profit_ratio_status="DATA_INSUFFICIENT"
+            if closing is not None
+            else "NOT_DUE"
+            if reason == "NOT_DUE"
+            else "NOT_CAPTURED",
+            profit_ratio_reason_code=reason,
+            profit_ratio_quality=closing.observation.quality if closing is not None else None,
+            quality=closing.observation.quality if closing is not None else "UNAVAILABLE",
+            status="DATA_INSUFFICIENT"
+            if closing is not None
+            else "NOT_DUE"
+            if reason == "NOT_DUE"
+            else "NOT_CAPTURED",
         )

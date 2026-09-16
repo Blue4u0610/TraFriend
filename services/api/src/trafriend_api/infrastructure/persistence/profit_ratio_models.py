@@ -11,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -92,4 +93,54 @@ class ProfitRatioObservationRecord(Base):
             "(status = 'DATA_INSUFFICIENT' AND ratio IS NULL) OR "
             "(status IN ('ESTIMATED', 'REPORTED') AND ratio IS NOT NULL)"
         ),
+    )
+
+
+class ProfitRatioDailyObservationRecord(Base):
+    __tablename__ = "profit_ratio_daily_observations"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    instrument_id: Mapped[str] = mapped_column(String(100), index=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    trading_date: Mapped[date] = mapped_column(Date, index=True)
+    ratio: Mapped[Decimal] = mapped_column(Numeric())
+    time_basis: Mapped[str] = mapped_column(String(40))
+    market_timestamp: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    provider: Mapped[str] = mapped_column(String(50))
+    source_feed: Mapped[str] = mapped_column(String(100))
+    quality: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40))
+    reason_code: Mapped[str] = mapped_column(String(100))
+    methodology_key: Mapped[str] = mapped_column(String(100))
+    methodology_version: Mapped[str] = mapped_column(String(20))
+    source_note: Mapped[str] = mapped_column(String(500))
+    version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id",
+            "trading_date",
+            "methodology_key",
+            "methodology_version",
+            "time_basis",
+            "version",
+            name="uq_profit_ratio_daily_observation_version",
+        ),
+        CheckConstraint("ratio >= 0 AND ratio <= 1"),
+        CheckConstraint(
+            "time_basis IN ('CLOSE', 'DAILY_TIME_UNVERIFIED')",
+            name="ck_profit_ratio_daily_time_basis",
+        ),
+        CheckConstraint(
+            "(time_basis = 'CLOSE' AND market_timestamp IS NOT NULL) OR "
+            "(time_basis = 'DAILY_TIME_UNVERIFIED' AND market_timestamp IS NULL)",
+            name="ck_profit_ratio_daily_market_timestamp",
+        ),
+        CheckConstraint("status = 'REPORTED'"),
+        CheckConstraint("version > 0"),
+        CheckConstraint("market_timestamp IS NULL OR market_timestamp <= observed_at"),
     )

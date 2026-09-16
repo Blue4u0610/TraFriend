@@ -357,7 +357,7 @@ instrument/trading date for display; ratio availability never gates price reads.
 OHLC and returns retain their own provenance and availability fields. Normal API
 composition wires repositories only. `capture_qqq_price_history` is the bounded
 historical/operational entry point. `run_daily_market_update` owns routine completed-
-session OHLC maintenance; `capture_profit_ratio` remains the separately runnable
+session OHLC maintenance; `capture_profit_ratio` remains the separately runnable legacy
 OPEN/CLOSE ratio-input diagnostic and also safely maintains OHLC when invoked. No
 worker invents a Profit Ratio when validated model inputs are absent.
 
@@ -368,14 +368,24 @@ market snapshot through an official local OpenD. QQQ membership comes from the d
 TraFriend catalog, not from screen results. The adapter preserves the SDK's reported
 fractional Decimal and labels it
 `FUTU_CHIPS_PROFIT_RATIO/1`; it does not reverse engineer Futu's methodology.
-`capture_futu_profit_ratio` is a finite external-worker command with bounded
-calendar-derived open/close windows. PostgreSQL price-context identities include
+`capture_futu_profit_ratio` is a finite external-worker command with a bounded
+calendar-derived close window. PostgreSQL price-context identities include
 methodology so the Futu series can coexist with older `CHIP_TURNOVER/1` rows.
 FastAPI wires only the selected persisted methodology and never contacts OpenD.
 For the first unattended deployment, a user-level macOS launchd job invokes this
 command and the existing daily market update using secrets read from macOS Keychain.
 It remains outside FastAPI, rejects non-production database targets, and has no
 permanent polling loop in application code.
+
+ADR 0009 adds a second immutable storage shape for a single provider-reported value
+per instrument and trading date. `profit_ratio_daily_observations` records an
+explicit time basis: `CLOSE` only when capture timing proves it, otherwise
+`DAILY_TIME_UNVERIFIED`. The read service prefers a valid genuine close observation,
+then a daily time-unverified observation; it does not relabel a legacy OPEN row as a
+daily value. The public daily response exposes one additive `profit_ratio` view plus
+timing/provenance fields while retaining legacy phase fields for compatible clients.
+The bundled SNDK import is bounded, validated and idempotent. Independent Alpaca OHLC
+backfill remains a separate operation and is joined by trading date only at read time.
 
 `bootstrap_production` seeds QQQ identity metadata only when empty, from the
 source-attributed 2026-09-04 bundled snapshot, and verifies nonzero searchable

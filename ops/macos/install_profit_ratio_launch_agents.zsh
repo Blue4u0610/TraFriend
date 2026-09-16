@@ -27,4 +27,4 @@ install_agent "xyz.trafriend.profit-ratio-capture"
 
 /bin/echo "TraFriend keep-awake LaunchAgent: LOADED"
 /bin/echo "TraFriend capture LaunchAgent: LOADED"
-/bin/echo "Schedule: 09:50, 10:20, 13:20, 13:50, 16:20, 16:50 local time"
+/bin/echo "Schedule: 16:20 and 16:50 local time (close-window capture and retry)"

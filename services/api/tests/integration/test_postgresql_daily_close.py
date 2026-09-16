@@ -449,16 +449,16 @@ def test_production_bootstrap_inspection_is_idempotent(
 ) -> None:
     assert "database_url=" not in repr(postgresql_context)
     with pytest.raises(ValueError, match="QQQ search metadata is not initialized"):
-        inspect_bootstrap(postgresql_context.engine, "20260912_0010")
+        inspect_bootstrap(postgresql_context.engine, "20260915_0011")
     PostgreSQLProfitRatioRepository(postgresql_context.engine).save_constituents((
         NasdaqConstituent("ins_bootstrap_test", "BOOTTEST", "Synthetic QQQ stock",
                           date(2026, 9, 4), "mock-bootstrap"),
     ))
-    first = inspect_bootstrap(postgresql_context.engine, "20260912_0010")
-    second = inspect_bootstrap(postgresql_context.engine, "20260912_0010")
+    first = inspect_bootstrap(postgresql_context.engine, "20260915_0011")
+    second = inspect_bootstrap(postgresql_context.engine, "20260915_0011")
 
     assert first == second
-    assert first.revision == "20260912_0010"
+    assert first.revision == "20260915_0011"
     assert first.underlyings == 238
     assert first.leveraged_products == 493
     assert first.qqq_constituents == 1

@@ -4,9 +4,10 @@
 
 The QQQ-only search and charts read PostgreSQL through dedicated public read
 endpoints. Selecting a stock displays complete price OHLC candles by default.
-Price daily K, daily return, and Profit Ratio are independently selectable layers in
-one synchronized trading-date chart with explicit USD and percentage scales.
-Two ratio endpoint values can form a body but cannot supply intraday ratio high/low.
+Price daily K, daily return, and one daily Profit Ratio are independently selectable
+layers in one synchronized trading-date chart with explicit USD and percentage scales.
+A genuine close-window ratio is preferred; a historical daily value with unknown
+effective time is labeled as time-unverified rather than silently called a close.
 A missing ratio does not hide stock search, valid price candles, or daily returns.
 An explicit Mock fixture is used only when no PostgreSQL configuration is supplied.
 
@@ -58,6 +59,13 @@ missing dates remain missing, and immutable conflicts never overwrite valid hist
 Use the older `capture_profit_ratio` command for OPEN/CLOSE ratio-input observations;
 it also delegates completed-day independent OHLC capture. Price acquisition does not
 solve unavailable cost-distribution/float inputs or generate synthetic ratio values.
+
+For a bounded SNDK repair matching the audited daily Profit Ratio history:
+
+```sh
+.venv/bin/python -m trafriend_api.scripts.capture_qqq_price_history \
+  --symbols SNDK --start 2026-08-04 --end 2026-09-15
+```
 
 Local real replay on 2026-09-08: 102 securities, 63 sessions, 6,417 bars inserted;
 9 unavailable dates (HONA June 8-12; SPCX June 8-11), zero conflicts. Rerun:
@@ -134,10 +142,10 @@ After applying migrations, the independently runnable command is:
 .venv/bin/python -m trafriend_api.scripts.capture_futu_profit_ratio
 ```
 
-Run it on weekdays at the same 9:50, 13:20 and 16:20 New York checks used by the
+Run it on weekdays at the 16:20 and 16:50 New York checks used by the
 local external runner. The command itself accepts work only 20–55 minutes after the
-calendar open or actual close, so the 13:20 check activates only on early-close
-days. `--phase OPEN|CLOSE` may assert the expected phase; `--symbols SNDK,NVDA`
+calendar's actual close, including early-close days. `--phase CLOSE` may assert the
+expected phase; `--symbols SNDK,NVDA`
 provides a bounded smoke test. Outside a due window it exits successfully with
 `NOT_DUE` and never contacts OpenD. Existing rows are idempotent and avoid provider
 calls. Missing values are `UNAVAILABLE`, not stale fallbacks.
@@ -168,9 +176,17 @@ current Alembic revision, Keychain entries, and OpenD listener all validate. Log
 written under `~/Library/Logs/TraFriend`. Remove both agents without deleting the
 Keychain items with `./ops/macos/uninstall_profit_ratio_launch_agents.zsh`.
 
-OpenD's current featured property does not provide documented historical snapshots,
-so no three-month ratio backfill is claimed. The independent three-month price K
-line remains available. Before public display, verify redistribution rights and set
+OpenD's current featured property does not provide documented historical snapshots.
+A separate reviewed SNDK desktop-chart transcription can be imported with:
+
+```sh
+.venv/bin/python -m trafriend_api.scripts.import_daily_profit_ratio_history
+```
+
+The bundled 30-row history covers 2026-08-04 through 2026-09-15 and is stored as
+`DAILY_TIME_UNVERIFIED`; it is not claimed to be a close-window series. Reimport is
+idempotent and conflicts fail. The independent price K line remains available.
+Before public display, verify redistribution rights and set
 quality to `REALTIME` or `DELAYED` only when supported by the account entitlement.
 
 Stock Screening V2 reports this field in normalized fractional `0..1` units. The

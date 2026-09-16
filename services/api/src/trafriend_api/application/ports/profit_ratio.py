@@ -9,6 +9,7 @@ from typing import Optional, Sequence
 from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioCaptureInput,
+    ProfitRatioDailyObservation,
     ProfitRatioPhase,
     ProfitRatioRecord,
     ProfitRatioSession,
@@ -63,6 +64,27 @@ class ProfitRatioRepository(ABC):
     @abstractmethod
     def save(self, record: ProfitRatioRecord) -> ProfitRatioPersistenceResult:
         """Atomically store ratio and separate price; upgrade null via a new version only."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def daily_history(
+        self,
+        instrument_id: str,
+        start: date,
+        end: date,
+        methodology_key: str,
+        methodology_version: str,
+    ) -> Sequence[ProfitRatioDailyObservation]:
+        """Return immutable single daily values without filling missing dates."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_daily(
+        self, observation: ProfitRatioDailyObservation
+    ) -> ProfitRatioPersistenceOutcome:
+        """Idempotently store a reported daily value or raise on conflict."""
+
         raise NotImplementedError
 
 

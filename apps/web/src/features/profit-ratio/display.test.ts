@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultProfitRatioRange, formatRatioPrice, formatRatioValue } from "./display";
+import { defaultProfitRatioRange, formatRatioPrice, formatRatioValue, profitRatioMonthRange } from "./display";
 
 describe("Profit Ratio display", () => {
   it("formats fractional decimal strings without binary-price rounding", () => {
@@ -22,9 +22,11 @@ describe("Profit Ratio display", () => {
     }
   });
 
-  it("uses New York today and clamps three-month ranges at month end", () => {
-    expect(defaultProfitRatioRange(new Date("2026-09-09T01:00:00Z"))).toEqual({ start: "2026-06-08", end: "2026-09-08" });
-    expect(defaultProfitRatioRange(new Date("2026-05-31T20:00:00Z"))).toEqual({ start: "2026-02-28", end: "2026-05-31" });
-    expect(defaultProfitRatioRange(new Date("2026-01-15T20:00:00Z"))).toEqual({ start: "2025-10-15", end: "2026-01-15" });
+  it("uses the current New York month and bounds explicit month selections", () => {
+    expect(defaultProfitRatioRange(new Date("2026-09-09T01:00:00Z"))).toEqual({ start: "2026-09-01", end: "2026-09-08" });
+    expect(defaultProfitRatioRange(new Date("2026-05-31T20:00:00Z"))).toEqual({ start: "2026-05-01", end: "2026-05-31" });
+    expect(profitRatioMonthRange("2026-08", "2026-09-08")).toEqual({ start: "2026-08-01", end: "2026-08-31" });
+    expect(profitRatioMonthRange("2026-09", "2026-09-08")).toEqual({ start: "2026-09-01", end: "2026-09-08" });
+    expect(profitRatioMonthRange("2026-10", "2026-09-08")).toBeNull();
   });
 });

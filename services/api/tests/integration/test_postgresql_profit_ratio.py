@@ -28,12 +28,14 @@ from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioCaptureInput,
     ProfitRatioConflictError,
+    ProfitRatioDailyObservation,
     ProfitRatioObservation,
     ProfitRatioPhase,
     ProfitRatioPriceObservation,
     ProfitRatioRecord,
     ProfitRatioSession,
     ProfitRatioStatus,
+    ProfitRatioTimeBasis,
 )
 from trafriend_api.infrastructure.calendar.profit_ratio import ProfitRatioExchangeCalendar
 from trafriend_api.infrastructure.persistence.daily_price import PostgreSQLDailyPriceRepository
@@ -97,7 +99,8 @@ def postgresql_context() -> Iterator[ProfitRatioPostgreSQLContext]:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
         assert {
-            "qqq_constituent_snapshots", "profit_ratio_capture_prices", "profit_ratio_observations"
+            "qqq_constituent_snapshots", "profit_ratio_capture_prices",
+            "profit_ratio_observations", "profit_ratio_daily_observations",
         }.issubset(inspect(schema_engine).get_table_names())
         yield ProfitRatioPostgreSQLContext(database_url, schema, schema_engine)
         with schema_engine.connect() as connection:
@@ -263,6 +266,54 @@ def test_postgresql_ratio_conflicts_do_not_change_price_or_append_observation(
                              ProfitRatioPhase.CLOSE) == stored
 
 
+def test_postgresql_daily_reported_ratio_is_idempotent_immutable_and_readable(
+    postgresql_context: ProfitRatioPostgreSQLContext,
+) -> None:
+    repository = PostgreSQLProfitRatioRepository(postgresql_context.engine)
+    member = _member("DAILYRATIO")
+    candidate = ProfitRatioDailyObservation(
+        id="candidate",
+        instrument_id=member.instrument_id,
+        symbol=member.symbol,
+        trading_date=TRADING_DATE,
+        ratio=Decimal("0.9591"),
+        time_basis=ProfitRatioTimeBasis.DAILY_TIME_UNVERIFIED,
+        market_timestamp=None,
+        observed_at=NOW,
+        provider="futu",
+        source_feed="desktop-chip-distribution-history",
+        quality="TIME_UNVERIFIED",
+        status=ProfitRatioStatus.REPORTED,
+        reason_code="HISTORICAL_UI_REPORTED",
+        methodology_key=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+        methodology_version=FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+        source_note="Futu desktop historical daily value; time undisclosed",
+    )
+    assert repository.save_daily(candidate) == ProfitRatioPersistenceOutcome.INSERTED
+    assert repository.save_daily(replace(candidate, observed_at=NOW + timedelta(minutes=1))) \
+        == ProfitRatioPersistenceOutcome.EXISTING
+    stored = repository.daily_history(
+        member.instrument_id,
+        TRADING_DATE,
+        TRADING_DATE,
+        FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.id,
+        FUTU_CHIPS_PROFIT_RATIO_METHODOLOGY.version,
+    )
+    assert len(stored) == 1
+    assert stored[0].ratio == Decimal("0.9591")
+    assert stored[0].market_timestamp is None
+    with pytest.raises(ProfitRatioConflictError):
+        repository.save_daily(replace(candidate, ratio=Decimal("0.9")))
+    with pytest.raises(DBAPIError), postgresql_context.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE profit_ratio_daily_observations SET ratio = 0.1 "
+                "WHERE instrument_id = :id"
+            ),
+            {"id": member.instrument_id},
+        )
+
+
 def test_postgresql_futu_method_coexists_with_legacy_method_and_survives_recreation(
     postgresql_context: ProfitRatioPostgreSQLContext,
 ) -> None:
@@ -390,6 +441,8 @@ def test_postgresql_api_reads_and_application_recreation_make_zero_provider_call
                 assert payload["methodology"]["id"] == "CHIP_TURNOVER"
                 assert row["open_ratio"] == "0.6"
                 assert row["close_ratio"] == "0.7"
+                assert row["profit_ratio"] == "0.7"
+                assert row["profit_ratio_time_basis"] == "CLOSE"
                 assert row["ratio_change"] == "0.1"
                 assert row["price_change_return"] == "0.1"
                 assert Decimal(row["open_price"]) == Decimal("100")

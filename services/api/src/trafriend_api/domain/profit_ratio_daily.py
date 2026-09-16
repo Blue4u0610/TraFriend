@@ -30,6 +30,13 @@ class ProfitRatioStatus(str, Enum):
     DATA_INSUFFICIENT = "DATA_INSUFFICIENT"
 
 
+class ProfitRatioTimeBasis(str, Enum):
+    """What market-time claim a single daily value is allowed to make."""
+
+    CLOSE = "CLOSE"
+    DAILY_TIME_UNVERIFIED = "DAILY_TIME_UNVERIFIED"
+
+
 def _aware(value: datetime) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("market and observation timestamps must be timezone-aware")
@@ -115,6 +122,77 @@ class ProfitRatioObservation:
             raise ValueError("insufficient observations cannot contain a fabricated ratio")
         if self.status == ProfitRatioStatus.DATA_INSUFFICIENT and not self.reason_code:
             raise ValueError("insufficient observations require an explicit reason")
+
+
+@dataclass(frozen=True)
+class ProfitRatioDailyObservation:
+    """One immutable provider-reported value for a trading date.
+
+    This is intentionally separate from OPEN/CLOSE endpoint observations. A
+    historical UI value whose effective intraday instant is undisclosed must
+    remain DAILY_TIME_UNVERIFIED and cannot be promoted to CLOSE.
+    """
+
+    id: str
+    instrument_id: str
+    symbol: str
+    trading_date: date
+    ratio: Decimal
+    time_basis: ProfitRatioTimeBasis
+    market_timestamp: Optional[datetime]
+    observed_at: datetime
+    provider: str
+    source_feed: str
+    quality: str
+    status: ProfitRatioStatus
+    reason_code: str
+    methodology_key: str
+    methodology_version: str
+    source_note: str
+    version: int = 1
+
+    def __post_init__(self) -> None:
+        _ratio(self.ratio)
+        _aware(self.observed_at)
+        if self.market_timestamp is not None:
+            _aware(self.market_timestamp)
+            if self.observed_at < self.market_timestamp:
+                raise ValueError("observation cannot precede its market-effective instant")
+        if self.time_basis == ProfitRatioTimeBasis.CLOSE and self.market_timestamp is None:
+            raise ValueError("a close value requires its market-effective timestamp")
+        if (
+            self.time_basis == ProfitRatioTimeBasis.DAILY_TIME_UNVERIFIED
+            and self.market_timestamp is not None
+        ):
+            raise ValueError("an unverified daily value cannot claim a market timestamp")
+        if self.status != ProfitRatioStatus.REPORTED:
+            raise ValueError("single daily provider values must be reported, not estimated")
+        if self.version < 1:
+            raise ValueError("observation versions must be positive")
+        if not all(
+            (
+                self.id,
+                self.instrument_id,
+                self.symbol,
+                self.provider,
+                self.source_feed,
+                self.quality,
+                self.methodology_key,
+                self.methodology_version,
+                self.source_note,
+            )
+        ):
+            raise ValueError("daily observations require identity and bounded provenance")
+        if self.symbol != self.symbol.strip().upper() or len(self.symbol) > 20:
+            raise ValueError("daily observation symbol must be canonical uppercase text")
+
+
+def profit_ratio_daily_observations_equal(
+    left: ProfitRatioDailyObservation, right: ProfitRatioDailyObservation
+) -> bool:
+    """Import time and generated identity do not change the reported market fact."""
+
+    return replace(left, id=right.id, observed_at=right.observed_at) == right
 
 
 @dataclass(frozen=True)

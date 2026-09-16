@@ -15,8 +15,7 @@ import { getProfitRatioDaily, searchProfitRatioUniverse } from "@/lib/api/client
 import type { ProfitRatioConstituent, ProfitRatioDailyHistory } from "@/lib/api/generated/profit-ratio";
 
 import { CombinedDailyChart, type DailyChartLayers } from "./daily-price-chart";
-import { hasRatioProvenanceMismatch } from "./daily-ratio-chart";
-import { formatRatioPrice, formatRatioValue, type ProfitRatioDateRange } from "./display";
+import { formatRatioPrice, formatRatioValue, profitRatioMonthRange, type ProfitRatioDateRange } from "./display";
 
 type Labels = Dictionary["profitRatio"];
 
@@ -32,6 +31,7 @@ function stateLabel(value: string, t: Labels) {
   if (key === "DELAYED") return t.delayed;
   if (key === "REALTIME") return t.realtime;
   if (key === "UNKNOWN") return t.unknown;
+  if (key === "TIME_UNVERIFIED") return t.unknown;
   if (key === "MIXED") return t.mixed;
   if (key === "PROVENANCE_MISMATCH") return t.provenanceMismatch;
   if (key === "NOT_CAPTURED" || key === "EMPTY") return t.notCaptured;
@@ -79,7 +79,7 @@ function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; rang
           {layers.ratio && result.gaps.length > 0 && <details className="mt-4 text-sm text-amber-200">
             <summary className="cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-primary">{t.gaps} ({result.gaps.length})</summary>
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">{result.gaps.map((gap) => <li key={`${gap.trading_date}:${gap.phase}:${gap.reason_code}`}>
-              {gap.trading_date} · {gap.phase === "OPEN" ? t.openRatio : t.closeRatio} · {gap.reason_code === "NOT_DUE" ? t.pending : gap.reason_code === "NOT_CAPTURED" ? t.notCaptured : t.insufficient} <span className="font-mono text-xs">({gap.reason_code})</span>
+              {gap.trading_date} · {t.dailyProfitRatio} · {gap.reason_code === "NOT_DUE" ? t.pending : gap.reason_code === "NOT_CAPTURED" ? t.notCaptured : t.insufficient} <span className="font-mono text-xs">({gap.reason_code})</span>
             </li>)}</ul>
           </details>}
         </section>}
@@ -91,7 +91,7 @@ function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; rang
         <Table>
           <caption className="pb-3 text-left text-xs text-muted-foreground">{t.returnExplanation}</caption>
           <TableHeader><TableRow>
-            {[t.date, t.openPrice, t.highPrice, t.lowPrice, t.closingPrice, t.dailyReturn, t.priceQuality, t.openRatio, t.closeRatio, t.ratioQuality].map((heading) => <TableHead key={heading}>{heading}</TableHead>)}
+            {[t.date, t.openPrice, t.highPrice, t.lowPrice, t.closingPrice, t.dailyReturn, t.priceQuality, t.dailyProfitRatio, t.ratioTimeBasis, t.ratioQuality].map((heading) => <TableHead key={heading}>{heading}</TableHead>)}
           </TableRow></TableHeader>
           <TableBody>{rows.map((row) => <TableRow key={row.trading_date}>
             <TableCell className="font-mono">{row.trading_date}</TableCell>
@@ -101,9 +101,9 @@ function DailyHistory({ symbol, range, onRetry, layers }: { symbol: string; rang
             <TableCell className="font-mono">{formatRatioPrice(row.close_price)}</TableCell>
             <TableCell className="font-mono">{formatRatioValue(row.price_change_return, true)}</TableCell>
             <TableCell className="text-xs text-muted-foreground" title={[row.price_provider, row.price_source_feed, row.price_market_timestamp, row.price_observed_at].filter(Boolean).join(" · ")}>{stateLabel(row.price_status ?? "NOT_CAPTURED", t)} · {stateLabel(row.price_quality ?? "UNAVAILABLE", t)}</TableCell>
-            <TableCell className="font-mono" title={row.open_observed_at ?? undefined}>{formatRatioValue(row.open_ratio)}</TableCell>
-            <TableCell className="font-mono" title={row.close_observed_at ?? undefined}>{formatRatioValue(row.close_ratio)}</TableCell>
-            <TableCell className="text-xs text-muted-foreground">{hasRatioProvenanceMismatch(row) ? t.provenanceMismatch : stateLabel(row.status, t)} · {stateLabel(row.quality, t)}</TableCell>
+            <TableCell className="font-mono" title={row.profit_ratio_observed_at ?? undefined}>{formatRatioValue(row.profit_ratio)}</TableCell>
+            <TableCell className="text-xs text-muted-foreground" title={row.profit_ratio_source_note ?? undefined}>{row.profit_ratio_time_basis === "CLOSE" ? t.closeTimeBasis : row.profit_ratio_time_basis === "DAILY_TIME_UNVERIFIED" ? t.unverifiedDailyTimeBasis : "—"}</TableCell>
+            <TableCell className="text-xs text-muted-foreground">{stateLabel(row.profit_ratio_status ?? "NOT_CAPTURED", t)} · {stateLabel(row.profit_ratio_quality ?? "UNAVAILABLE", t)}</TableCell>
           </TableRow>)}</TableBody>
         </Table>
       </CardContent>
@@ -117,8 +117,10 @@ export function ProfitRatioDashboard({ initialRange }: { initialRange: ProfitRat
   const [query, setQuery] = useState("");
   const [searchResult, setSearchResult] = useState<{ query: string; rows: ProfitRatioConstituent[]; failed: boolean } | null>(null);
   const [selected, setSelected] = useState<ProfitRatioConstituent | null>(null);
-  const [draftRange, setDraftRange] = useState(initialRange);
-  const [range, setRange] = useState(initialRange);
+  const [draftMonth, setDraftMonth] = useState(initialRange.end.slice(0, 7));
+  const [range, setRange] = useState(
+    profitRatioMonthRange(initialRange.end.slice(0, 7), initialRange.end) ?? initialRange,
+  );
   const [rangeError, setRangeError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [layers, setLayers] = useState<DailyChartLayers>({ price: true, returns: false, ratio: false });
@@ -155,13 +157,12 @@ export function ProfitRatioDashboard({ initialRange }: { initialRange: ProfitRat
         {selected && <p className="text-xs leading-6 text-muted-foreground">{selected.symbol} · {selected.name}<br />{interpolate(t.membership, { date: selected.as_of, source: selected.source })}</p>}
         <form className="flex flex-wrap items-end gap-3 border-t border-white/[0.07] pt-4" onSubmit={(event) => {
           event.preventDefault();
-          const days = (Date.parse(draftRange.end) - Date.parse(draftRange.start)) / 86_400_000;
-          if (!draftRange.start || !draftRange.end || !Number.isFinite(days) || days < 0 || days > 366 || draftRange.end > initialRange.end) { setRangeError(true); return; }
-          setRangeError(false); setRange({ ...draftRange });
+          const nextRange = profitRatioMonthRange(draftMonth, initialRange.end);
+          if (!nextRange) { setRangeError(true); return; }
+          setRangeError(false); setRange(nextRange);
         }}>
-          <div><label htmlFor="profit-start" className="mb-1 block text-xs text-muted-foreground">{t.startDate}</label><Input id="profit-start" type="date" max={initialRange.end} value={draftRange.start} onChange={(event) => setDraftRange({ ...draftRange, start: event.target.value })} required /></div>
-          <div><label htmlFor="profit-end" className="mb-1 block text-xs text-muted-foreground">{t.endDate}</label><Input id="profit-end" type="date" max={initialRange.end} value={draftRange.end} onChange={(event) => setDraftRange({ ...draftRange, end: event.target.value })} required /></div>
-          <Button type="submit" variant="outline">{t.applyRange}</Button>
+          <div><label htmlFor="profit-month" className="mb-1 block text-xs text-muted-foreground">{t.month}</label><Input id="profit-month" type="month" max={initialRange.end.slice(0, 7)} value={draftMonth} onChange={(event) => setDraftMonth(event.target.value)} required /></div>
+          <Button type="submit" variant="outline">{t.applyMonth}</Button>
           {selected && <Button type="button" variant="ghost" onClick={() => setRetry((value) => value + 1)}>{t.refresh}</Button>}
           {rangeError && <p role="alert" className="w-full text-sm text-amber-200">{t.invalidRange}</p>}
         </form>

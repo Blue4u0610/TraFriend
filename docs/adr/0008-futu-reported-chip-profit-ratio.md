@@ -1,5 +1,8 @@
 # ADR 0008: Futu-reported chip profit ratio
 
+> Historical daily values whose effective time is not disclosed are governed by
+> ADR 0009. They do not change this ADR's live OpenD adapter semantics.
+
 - Status: Accepted; local live read entitlement validated
 - Date: 2026-09-12
 

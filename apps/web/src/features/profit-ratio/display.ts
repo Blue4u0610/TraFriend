@@ -37,8 +37,19 @@ export function defaultProfitRatioRange(now: Date = new Date()): ProfitRatioDate
   const year = part("year");
   const month = part("month");
   const day = part("day");
-  const end = new Date(Date.UTC(year, month - 1, day));
-  const previousMonthLastDay = new Date(Date.UTC(year, month - 3, 0)).getUTCDate();
-  const start = new Date(Date.UTC(year, month - 4, Math.min(day, previousMonthLastDay)));
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  const prefix = `${year}-${month.toString().padStart(2, "0")}`;
+  return { start: `${prefix}-01`, end: `${prefix}-${day.toString().padStart(2, "0")}` };
+}
+
+export function profitRatioMonthRange(month: string, maximumEnd: string): ProfitRatioDateRange | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (year < 1970 || monthNumber < 1 || monthNumber > 12) return null;
+  const start = `${month}-01`;
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const naturalEnd = `${month}-${lastDay.toString().padStart(2, "0")}`;
+  if (start > maximumEnd) return null;
+  return { start, end: naturalEnd > maximumEnd ? maximumEnd : naturalEnd };
 }

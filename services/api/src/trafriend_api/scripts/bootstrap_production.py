@@ -36,6 +36,7 @@ REQUIRED_TABLES = frozenset(
         "qqq_constituent_snapshots",
         "profit_ratio_capture_prices",
         "profit_ratio_observations",
+        "profit_ratio_daily_observations",
         "market_daily_price_bars",
     }
 )

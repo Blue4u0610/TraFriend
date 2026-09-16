@@ -12,10 +12,12 @@ from trafriend_api.application.ports.profit_ratio import (
 from trafriend_api.domain.profit_ratio_daily import (
     NasdaqConstituent,
     ProfitRatioConflictError,
+    ProfitRatioDailyObservation,
     ProfitRatioPhase,
     ProfitRatioRecord,
     ProfitRatioStatus,
     price_observations_equal,
+    profit_ratio_daily_observations_equal,
     profit_ratio_records_equal,
 )
 
@@ -25,6 +27,9 @@ class InMemoryProfitRatioRepository(ProfitRatioRepository):
         self._snapshots: dict[date, tuple[NasdaqConstituent, ...]] = {}
         self._records: dict[
             tuple[str, date, ProfitRatioPhase, str, str], list[ProfitRatioRecord]
+        ] = {}
+        self._daily_records: dict[
+            tuple[str, date, str, str, str], ProfitRatioDailyObservation
         ] = {}
         if constituents:
             self.save_constituents(constituents)
@@ -124,3 +129,49 @@ class InMemoryProfitRatioRepository(ProfitRatioRepository):
         stored = replace(record, observation=replace(observation, version=len(versions) + 1))
         versions.append(stored)
         return ProfitRatioPersistenceResult(stored, outcome)
+
+    def daily_history(
+        self,
+        instrument_id: str,
+        start: date,
+        end: date,
+        methodology_key: str,
+        methodology_version: str,
+    ) -> Sequence[ProfitRatioDailyObservation]:
+        return tuple(
+            sorted(
+                (
+                    observation
+                    for (
+                        stored_id,
+                        trading_date,
+                        stored_methodology_key,
+                        stored_methodology_version,
+                        _time_basis,
+                    ), observation in self._daily_records.items()
+                    if stored_id == instrument_id
+                    and start <= trading_date <= end
+                    and stored_methodology_key == methodology_key
+                    and stored_methodology_version == methodology_version
+                ),
+                key=lambda item: (item.trading_date, item.time_basis.value),
+            )
+        )
+
+    def save_daily(
+        self, observation: ProfitRatioDailyObservation
+    ) -> ProfitRatioPersistenceOutcome:
+        key = (
+            observation.instrument_id,
+            observation.trading_date,
+            observation.methodology_key,
+            observation.methodology_version,
+            observation.time_basis.value,
+        )
+        existing = self._daily_records.get(key)
+        if existing is not None:
+            if profit_ratio_daily_observations_equal(existing, observation):
+                return ProfitRatioPersistenceOutcome.EXISTING
+            raise ProfitRatioConflictError("immutable daily Profit Ratio conflicts")
+        self._daily_records[key] = observation
+        return ProfitRatioPersistenceOutcome.INSERTED

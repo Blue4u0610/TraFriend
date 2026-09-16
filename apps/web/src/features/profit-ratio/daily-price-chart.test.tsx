@@ -20,6 +20,11 @@ const row: ProfitRatioDailyRow = {
   price_status: "COMPLETE", price_quality: "MOCK", price_provider: "mock", price_source_feed: "mock-daily",
   price_adjustment: "raw", price_scope: "CONSOLIDATED_DAILY_ELIGIBLE_TRADES",
   price_observed_at: "2026-09-04T20:25:00Z", price_market_timestamp: "2026-09-04T04:00:00Z",
+  profit_ratio: null, profit_ratio_observed_at: null, profit_ratio_market_timestamp: null,
+  profit_ratio_time_basis: null, profit_ratio_quality: null, profit_ratio_status: "NOT_CAPTURED",
+  profit_ratio_reason_code: "NOT_CAPTURED", profit_ratio_provider: null,
+  profit_ratio_source_feed: null, profit_ratio_methodology_key: null,
+  profit_ratio_methodology_version: null, profit_ratio_source_note: null,
 };
 
 afterEach(cleanup);
@@ -29,12 +34,11 @@ describe("independent genuine daily price charts", () => {
     const next = {
       ...row,
       trading_date: "2026-09-08",
-      open_ratio: "0.40",
-      close_ratio: "0.45",
+      profit_ratio: "0.45",
       price_change_return: "-0.01",
     };
     const view = render(<LocaleProvider initialLocale="en"><CombinedDailyChart
-      rows={[{ ...row, open_ratio: "0.35", close_ratio: "0.42" }, next]}
+      rows={[{ ...row, profit_ratio: "0.42" }, next]}
       layers={{ price: true, returns: true, ratio: true }}
     /></LocaleProvider>);
     expect(screen.getAllByRole("img", { name: /Synchronized daily chart/ })).toHaveLength(1);
@@ -42,7 +46,7 @@ describe("independent genuine daily price charts", () => {
     expect(view.container.querySelectorAll("[data-price-candle]")).toHaveLength(2);
     expect(view.container.querySelectorAll("[data-daily-return]")).toHaveLength(2);
     expect(view.container.querySelectorAll("[data-daily-return-line]")).toHaveLength(1);
-    expect(view.container.querySelectorAll("[data-ratio-body]")).toHaveLength(2);
+    expect(view.container.querySelectorAll("[data-ratio-point]")).toHaveLength(2);
     expect(view.container.querySelectorAll("[data-ratio-line]")).toHaveLength(1);
   });
 

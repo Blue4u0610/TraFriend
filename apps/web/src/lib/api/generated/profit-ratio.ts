@@ -60,6 +60,18 @@ export type ProfitRatioDailyRow = {
   price_quality?: string | null;
   price_adjustment?: string | null;
   price_scope?: string | null;
+  profit_ratio?: string | null;
+  profit_ratio_observed_at?: string | null;
+  profit_ratio_market_timestamp?: string | null;
+  profit_ratio_time_basis?: string | null;
+  profit_ratio_quality?: string | null;
+  profit_ratio_status?: string;
+  profit_ratio_reason_code?: string;
+  profit_ratio_provider?: string | null;
+  profit_ratio_source_feed?: string | null;
+  profit_ratio_methodology_key?: string | null;
+  profit_ratio_methodology_version?: string | null;
+  profit_ratio_source_note?: string | null;
 };
 
 export type ProfitRatioGap = {

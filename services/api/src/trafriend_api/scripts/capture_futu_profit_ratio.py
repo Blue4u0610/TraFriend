@@ -1,4 +1,4 @@
-"""Capture current-session QQQ Profit Ratio endpoints from a local Futu OpenD."""
+"""Capture the current-session QQQ close-window Profit Ratio from Futu OpenD."""
 
 from __future__ import annotations
 
@@ -36,20 +36,17 @@ CAPTURE_WINDOW = timedelta(minutes=35)
 def _due_phase(
     now: datetime, opened_at: datetime, closed_at: datetime
 ) -> Optional[ProfitRatioPhase]:
-    for phase, instant in (
-        (ProfitRatioPhase.CLOSE, closed_at),
-        (ProfitRatioPhase.OPEN, opened_at),
-    ):
-        start = instant + PUBLICATION_DELAY
-        if start <= now <= start + CAPTURE_WINDOW:
-            return phase
+    del opened_at
+    start = closed_at + PUBLICATION_DELAY
+    if start <= now <= start + CAPTURE_WINDOW:
+        return ProfitRatioPhase.CLOSE
     return None
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--phase", choices=[phase.value for phase in ProfitRatioPhase], help="expected due phase"
+        "--phase", choices=[ProfitRatioPhase.CLOSE.value], help="expected due phase"
     )
     parser.add_argument("--symbols", help="comma-separated QQQ symbols for a bounded smoke test")
     arguments = parser.parse_args(argv)

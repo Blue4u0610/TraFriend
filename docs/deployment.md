@@ -244,10 +244,9 @@ interactive command hides all inputs and rejects the inherited local development
 ./ops/macos/install_profit_ratio_launch_agents.zsh
 ```
 
-The launchd job checks at 09:50/10:20, 13:20/13:50, and 16:20/16:50 in the Mac's
-America/New_York timezone. The application calendar accepts only actual OPEN/CLOSE
-windows, so weekends, holidays, normal-close checks on early-close days, and retries
-remain finite and idempotent. It starts the locally installed OpenD when necessary,
+The launchd job checks at 16:20 and 16:50 in the Mac's America/New_York timezone.
+The application calendar accepts only the actual CLOSE window, so weekends, holidays,
+early closes, and retries remain finite and idempotent. It starts the locally installed OpenD when necessary,
 writes directly to production PostgreSQL, then the existing database-only API exposes
 new rows without a build or restart.
 
@@ -267,6 +266,22 @@ TRAFRIEND_CORS_ORIGINS=https://www.trafriend.xyz \
 ```
 
 Historical backfill is deliberate and bounded; it is not part of daily Cron.
+Use `--symbols SNDK` to restrict a repair/backfill to one current QQQ member.
+
+### C.1 One-time audited daily Profit Ratio import
+
+After migration `20260915_0011`, import the bundled reviewed SNDK date/value history:
+
+```bash
+TRAFRIEND_ENV=production \
+TRAFRIEND_CORS_ORIGINS=https://www.trafriend.xyz \
+.venv/bin/python -m trafriend_api.scripts.import_daily_profit_ratio_history
+```
+
+The command validates the production target, QQQ membership, ratio bounds, duplicate
+dates and provenance. Repeating an identical import reports `EXISTING`; a conflicting
+immutable fact fails rather than overwriting. These rows use
+`DAILY_TIME_UNVERIFIED` because their source did not disclose effective intraday time.
 
 ### D. Routine Render Cron update
 
